@@ -1,0 +1,52 @@
+# Jarvis desktop assistant — Python 3.12, Windows
+# Torch CPU (for Silero TTS) is installed separately by scripts/install.ps1:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Core
+numpy>=1.26,<3
+pydantic>=2.7
+python-dotenv>=1.0
+httpx>=0.27
+rapidfuzz>=3.9
+psutil>=5.9
+
+# Audio I/O + wake word + VAD
+sounddevice>=0.5
+onnxruntime>=1.18
+vosk>=0.3.45
+miniaudio>=1.61
+
+# STT (GigaAM via ONNX)
+onnx-asr[hub]>=0.7
+
+# TTS (Silero via torch) + recorded Jarvis reactions
+num2words>=0.5.13
+
+# LLM providers
+google-genai>=1.0
+openai>=1.40
+ollama>=0.4
+
+# Russian morphology (city names, numbers)
+pymorphy3>=2.0
+pymorphy3-dicts-ru>=2.4
+
+# Windows: clipboard, windows, volume
+pywin32>=306
+pycaw>=20240210
+
+# Calendar
+icalendar>=6.0
+recurring-ical-events>=3.0
+
+# UI
+PySide6-Essentials>=6.7
+pynput>=1.7
+
+# Voice lab web
+fastapi>=0.111
+uvicorn>=0.30
+
+# Dev
+pytest>=8.2
+pytest-asyncio>=0.23

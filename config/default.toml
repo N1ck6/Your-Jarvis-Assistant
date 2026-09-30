@@ -1,0 +1,149 @@
+# Default settings. Do not edit: overrides go to data/settings.json
+# (written by the voice lab and the tray), or copy a key there by hand.
+
+[assistant]
+name = "Джарвис"
+# How Jarvis addresses the user (used sparingly in answers).
+address = "сэр"
+language = "ru"
+default_city = "Москва"
+# Seconds after an answer during which you can speak without the wake word.
+hot_window_sec = 5.0
+# Dialog context is forgotten after this many seconds of silence.
+dialog_ttl_sec = 180
+dialog_max_turns = 6
+
+[audio]
+input_device = ""          # "" = system default; name substring or index
+output_device = ""
+sample_rate = 16000
+vad_threshold = 0.5
+# Silence that ends an utterance.
+end_silence_ms = 700
+max_utterance_sec = 15.0
+# How long to wait for a command after a bare "Джарвис".
+await_command_sec = 6.0
+pre_roll_ms = 400
+earcons = true
+earcon_volume = 0.25
+
+[wake]
+engine = "vosk"
+model = "models/vosk-model-small-ru-0.22"
+phrases = ["джарвис", "джервис"]
+# Extra words in the grammar reduce false triggers on similar sounds.
+decoys = ["джон", "джей", "давай", "привет", "жарко"]
+# Heard only while Jarvis is talking: he stops and listens for the next command.
+stop_words = ["стоп", "хватит", "замолчи", "тихо", "подожди", "погоди", "стой", "секунду", "отмена"]
+# Double-check the wake word in the STT transcript.
+verify_with_stt = true
+verify_ratio = 70
+
+[stt]
+engine = "gigaam"
+model = "gigaam-v3-e2e-rnnt"
+# int8: same accuracy on Russian, ~270 MB RAM instead of ~930 MB.
+quantization = "int8"
+
+[tts]
+voice = "silero:eugene"
+rate = 1.0
+volume = 1.0
+
+[voice]
+# Recorded Jarvis reactions (Priler's project): jarvis-remaster | jarvis-howdy | jarvis-og | none
+pack = "jarvis-remaster"
+greet_on_start = true
+# "Слушаю, сэр" when only the wake word was said.
+reply_on_bare_wake = true
+# "Слушаюсь, сэр" instead of describing simple actions (open app, close window...).
+ok_for_actions = true
+
+[llm]
+# Order of the chain for short factual / internet questions.
+# Groq first: its browser_search works on the free tier; Gemini's Google Search grounding often has zero free quota.
+info_chain = ["groq", "gemini", "local"]
+# Screen help (images): Groq free tier has no vision models.
+vision_chain = ["gemini", "local"]
+# Everything else (chat, commands, explanations).
+local_chain = ["local"]
+# After a 429 / quota error the provider is skipped for this long.
+cooldown_sec = 900
+request_timeout_sec = 25
+
+[llm.gemini]
+# Lite first: ~0.8 s answers; "flash-latest" is often overloaded (503) on the free tier.
+models = ["gemini-flash-lite-latest", "gemini-flash-latest"]
+web_search = true
+max_output_tokens = 400
+
+[llm.groq]
+models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+web_search = true
+max_output_tokens = 600
+
+[llm.local]
+host = "http://127.0.0.1:11434"
+model = "qwen3:8b"
+vision_model = "qwen3-vl:4b-instruct"
+keep_alive = "30m"
+num_ctx = 4096
+temperature = 0.6
+
+[skills]
+# Order matters: the first module whose phrase matches wins. User scenarios go first.
+enabled = ["scenarios", "system", "media", "music", "dictation", "selection", "screen", "notes", "windows",
+           "search", "timers", "focus", "memory", "briefing", "agenda", "explain", "voice", "weather", "apps"]
+
+[apps]
+browser_home = "https://ya.ru"
+# spoken name -> target (exe, path, URI or URL). Merged with Start menu index.
+aliases = { "блокнот" = "notepad.exe", "калькулятор" = "calc.exe", "проводник" = "explorer.exe", "диспетчер задач" = "taskmgr.exe", "параметры" = "ms-settings:", "настройки" = "ms-settings:", "ножницы" = "ms-screenclip:", "ютуб" = "https://youtube.com", "вк" = "https://vk.com", "вконтакте" = "https://vk.com", "гитхаб" = "https://github.com", "почта" = "https://mail.yandex.ru", "карты" = "https://yandex.ru/maps", "переводчик" = "https://translate.yandex.ru" }
+translit = { "телеграм" = "telegram", "телеграмм" = "telegram", "хром" = "google chrome", "стим" = "steam", "дискорд" = "discord", "ворд" = "word", "эксель" = "excel", "спотифай" = "spotify", "яндекс браузер" = "yandex", "яндекс" = "yandex", "фаерфокс" = "firefox", "обс" = "obs studio", "вс код" = "visual studio code", "вскод" = "visual studio code", "пайчарм" = "pycharm", "зум" = "zoom" }
+
+[notes]
+# Markdown lists live here; can point to an Obsidian vault folder.
+dir = "data/notes"
+default_list = "заметки"
+
+[music]
+dir = "~/Desktop/music"
+
+[calendar]
+# Secret iCal links: Google Calendar -> Settings -> "Secret address in iCal format".
+ics_urls = []
+cache_min = 10
+
+[briefing]
+# "08:30" = say the morning briefing automatically every day; "" = only on request.
+auto_time = ""
+
+[focus]
+work_min = 25
+break_min = 5
+long_break_min = 15
+rounds = 4
+
+[search]
+default = "yandex"
+engines = { "yandex" = "https://yandex.ru/search/?text={q}", "google" = "https://www.google.com/search?q={q}", "youtube" = "https://www.youtube.com/results?search_query={q}", "wiki" = "https://ru.wikipedia.org/w/index.php?search={q}", "maps" = "https://yandex.ru/maps/?text={q}", "market" = "https://market.yandex.ru/search?text={q}" }
+
+[explain]
+provider = "local"
+max_cards = 5
+# Window closes this many seconds after the last card was spoken.
+linger_sec = 25
+
+[ui]
+tray = true
+hotkey_listen = "<ctrl>+<alt>+j"
+hotkey_mute = "<ctrl>+<alt>+m"
+# Hold to dictate into the active window.
+hotkey_dictation = "<ctrl>+<alt>+d"
+hotkey_screen = "<ctrl>+<alt>+s"
+# Long cloud answers are also shown as a card (chars).
+card_threshold_chars = 320
+
+[voicelab]
+host = "127.0.0.1"
+port = 8770

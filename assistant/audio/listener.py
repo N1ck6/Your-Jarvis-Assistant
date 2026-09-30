@@ -1,0 +1,295 @@
+"""Microphone state machine: VAD gate -> wake word -> utterance capture.
+
+Audio lives only in small in-memory buffers; nothing is written to disk.
+
+Modes
+  WAIT     idle; VAD runs on every frame, Vosk only while someone speaks
+  CAPTURE  recording a command until end-of-speech silence
+  AWAIT    ready for a command without the wake word (hot window, bare wake, hotkey)
+  DICTATE  recording dictation (until the hotkey is released or, by voice, until a pause)
+  PAUSED   microphone stream closed (muted)
+"""
+from __future__ import annotations
+
+import collections
+import enum
+import logging
+import queue
+import threading
+import time
+from dataclasses import dataclass
+from typing import Callable
+
+import numpy as np
+import sounddevice as sd
+
+from assistant.audio.player import resolve_device
+from assistant.audio.vad import FRAME, SileroVad
+from assistant.audio.wake import VoskWake
+
+log = logging.getLogger("listener")
+
+
+class Mode(str, enum.Enum):
+    WAIT = "wait"
+    CAPTURE = "capture"
+    AWAIT = "await"
+    DICTATE = "dictate"
+    PAUSED = "paused"
+
+
+@dataclass
+class Utterance:
+    audio: np.ndarray   # float32 16 kHz mono
+    source: str         # "wake" | "await" | "dictation"
+
+
+@dataclass
+class ListenerEvents:
+    on_wake: Callable[[], None]
+    on_stop_word: Callable[[str], None]
+    on_speech_start: Callable[[], None]
+    on_utterance: Callable[[Utterance], None]
+    on_await_timeout: Callable[[], None]
+
+
+class ListenerCore:
+    """Pure frame processing, no audio device. Fed with 512-sample int16 frames."""
+
+    def __init__(self, vad: SileroVad, wake: VoskWake, events: ListenerEvents, *, sr: int = 16000,
+                 vad_threshold: float = 0.5, end_silence_ms: int = 700, max_utterance_sec: float = 15.0,
+                 pre_roll_ms: int = 400) -> None:
+        self.vad = vad
+        self.wake = wake
+        self.ev = events
+        self.sr = sr
+        self.th = vad_threshold
+        self.frame_sec = FRAME / sr
+        self.end_frames = max(1, int(end_silence_ms / 1000 / self.frame_sec))
+        self.max_frames = int(max_utterance_sec / self.frame_sec)
+        self.hangover_frames = int(1.0 / self.frame_sec)  # keep feeding Vosk 1 s after speech
+        self.segment_cap = int(6.0 / self.frame_sec)
+        self.pre_roll: collections.deque[np.ndarray] = collections.deque(maxlen=max(1, int(pre_roll_ms / 1000 / self.frame_sec)))
+
+        self.mode = Mode.WAIT
+        self.assistant_speaking = False
+        self._lock = threading.RLock()
+        self._segment: collections.deque[np.ndarray] = collections.deque(maxlen=self.segment_cap)
+        self._in_speech = False
+        self._silence = 0
+        self._capture: list[np.ndarray] = []
+        self._capture_voiced = 0
+        self._capture_silence = 0
+        self._capture_source = "wake"
+        self._await_deadline = 0.0
+        self._await_voiced = 0
+        self._dict_frames: list[np.ndarray] = []
+        self._dict_until_pause = False
+        self._dict_voiced = 0
+        self._dict_silence = 0
+        self._dict_max = int(180 / self.frame_sec)
+        self._dict_pause_frames = int(1.6 / self.frame_sec)
+        self._dict_start_timeout = int(8.0 / self.frame_sec)
+
+    # --- control (any thread) ---
+    def to_wait(self) -> None:
+        with self._lock:
+            self.mode = Mode.WAIT
+            self._reset_segment()
+
+    def to_await(self, seconds: float) -> None:
+        with self._lock:
+            self.mode = Mode.AWAIT
+            self._await_deadline = time.monotonic() + seconds
+            self._await_voiced = 0
+
+    def start_dictation(self, until_pause: bool) -> None:
+        """until_pause=False: record until stop_dictation() (hotkey held); True: stop after a pause (voice)."""
+        with self._lock:
+            self.mode = Mode.DICTATE
+            self._dict_frames = list(self.pre_roll) if not until_pause else []
+            self._dict_until_pause = until_pause
+            self._dict_voiced = 0
+            self._dict_silence = 0
+
+    def stop_dictation(self) -> None:
+        with self._lock:
+            if self.mode is Mode.DICTATE:
+                self._finish_dictation()
+
+    def _finish_dictation(self) -> None:
+        frames, voiced = self._dict_frames, self._dict_voiced
+        self._dict_frames = []
+        self.mode = Mode.WAIT
+        self._reset_segment()
+        audio = np.concatenate(frames).astype(np.float32) / 32768.0 if frames and voiced >= 3 else np.zeros(0, np.float32)
+        self.ev.on_utterance(Utterance(audio, "dictation"))
+
+    def _reset_segment(self) -> None:
+        self._segment.clear()
+        self._in_speech = False
+        self._silence = 0
+        self.wake.reset()
+
+    def _start_capture(self, initial: list[np.ndarray], source: str) -> None:
+        self.mode = Mode.CAPTURE
+        self._capture = list(initial)
+        self._capture_voiced = 1
+        self._capture_silence = 0
+        self._capture_source = source
+
+    # --- processing (listener thread) ---
+    def process(self, frame: np.ndarray) -> None:
+        prob = self.vad(frame)
+        voiced = prob >= self.th
+        with self._lock:
+            if self.mode is Mode.WAIT:
+                self._process_wait(frame, voiced)
+            elif self.mode is Mode.CAPTURE:
+                self._process_capture(frame, voiced)
+            elif self.mode is Mode.AWAIT:
+                self._process_await(frame, voiced)
+            elif self.mode is Mode.DICTATE:
+                self._process_dictate(frame, voiced)
+            self.pre_roll.append(frame)
+
+    def _process_wait(self, frame: np.ndarray, voiced: bool) -> None:
+        if voiced:
+            if not self._in_speech:
+                self._segment.extend(self.pre_roll)
+                self._in_speech = True
+            self._silence = 0
+        elif self._in_speech:
+            self._silence += 1
+            if self._silence > self.hangover_frames:
+                self._reset_segment()
+                return
+        if not self._in_speech:
+            return
+
+        self._segment.append(frame)
+        pcm = frame.tobytes()
+        if self.assistant_speaking:
+            word = self.wake.feed_stop(pcm)
+            if word:
+                log.info("Стоп-слово: %s", word)
+                self._reset_segment()
+                self.ev.on_stop_word(word)
+                return
+        if self.wake.feed_wake(pcm):
+            log.info("Кодовое слово")
+            segment = list(self._segment)
+            self._reset_segment()
+            self._start_capture(segment, "wake")
+            self.ev.on_wake()
+
+    def _process_capture(self, frame: np.ndarray, voiced: bool) -> None:
+        self._capture.append(frame)
+        if voiced:
+            self._capture_voiced += 1
+            self._capture_silence = 0
+        else:
+            self._capture_silence += 1
+        if self._capture_silence >= self.end_frames or len(self._capture) >= self.max_frames:
+            audio = np.concatenate(self._capture).astype(np.float32) / 32768.0
+            source = self._capture_source
+            self._capture = []
+            self.mode = Mode.WAIT
+            self._reset_segment()
+            self.ev.on_utterance(Utterance(audio, source))
+
+    def _process_dictate(self, frame: np.ndarray, voiced: bool) -> None:
+        self._dict_frames.append(frame)
+        if voiced:
+            self._dict_voiced += 1
+            self._dict_silence = 0
+        else:
+            self._dict_silence += 1
+        n = len(self._dict_frames)
+        if n >= self._dict_max:
+            self._finish_dictation()
+        elif self._dict_until_pause:
+            if (self._dict_voiced and self._dict_silence >= self._dict_pause_frames) or                     (not self._dict_voiced and n >= self._dict_start_timeout):
+                self._finish_dictation()
+
+    def _process_await(self, frame: np.ndarray, voiced: bool) -> None:
+        if voiced:
+            self._await_voiced += 1
+            if self._await_voiced >= 2:  # ~64 ms of speech, ignores clicks
+                self._start_capture(list(self.pre_roll) + [frame], "await")
+                self.ev.on_speech_start()
+                return
+        else:
+            self._await_voiced = 0
+        if time.monotonic() > self._await_deadline:
+            self.mode = Mode.WAIT
+            self._reset_segment()
+            self.ev.on_await_timeout()
+
+
+class Microphone:
+    """Owns the input stream and a worker thread that runs ListenerCore."""
+
+    def __init__(self, core: ListenerCore, device: str = "", sr: int = 16000) -> None:
+        self.core = core
+        self.sr = sr
+        self.device = resolve_device(device, "input")
+        self._q: queue.Queue[np.ndarray] = queue.Queue(maxsize=300)
+        self._stream: sd.InputStream | None = None
+        self._thread: threading.Thread | None = None
+        self._running = False
+
+    @property
+    def paused(self) -> bool:
+        return self._stream is None
+
+    def _callback(self, indata, _frames, _time, status) -> None:
+        if status and status.input_overflow:
+            log.debug("input overflow")
+        try:
+            self._q.put_nowait(indata[:, 0].copy())
+        except queue.Full:
+            pass  # worker is behind; dropping audio is better than growing memory
+
+    def _worker(self) -> None:
+        while self._running:
+            try:
+                frame = self._q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                self.core.process(frame)
+            except Exception:
+                log.exception("Ошибка обработки аудио")
+
+    def start(self) -> None:
+        self._running = True
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._worker, name="listener", daemon=True)
+            self._thread.start()
+        self.resume()
+
+    def resume(self) -> None:
+        if self._stream is not None:
+            return
+        self.core.to_wait()
+        self._stream = sd.InputStream(samplerate=self.sr, channels=1, dtype="int16", blocksize=FRAME,
+                                      device=self.device, callback=self._callback)
+        self._stream.start()
+        name = sd.query_devices(self._stream.device)["name"]
+        log.info("Микрофон: %s", name)
+
+    def pause(self) -> None:
+        """Closes the stream so Windows shows the microphone as not in use."""
+        if self._stream is None:
+            return
+        self._stream.stop()
+        self._stream.close()
+        self._stream = None
+        with self._q.mutex:
+            self._q.queue.clear()
+        self.core.mode = Mode.PAUSED
+
+    def stop(self) -> None:
+        self._running = False
+        self.pause()

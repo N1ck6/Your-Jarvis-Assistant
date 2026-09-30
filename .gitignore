@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.env
+
+# Runtime data: settings overrides, timers, logs
+data/
+
+# Downloaded models (see scripts/install.ps1)
+models/
+
+# Local documents and archive of old projects
+docs/
+_to_delete/
+
+.vscode/
+.idea/
+*.log
+*.tmp
+Thumbs.db
+.DS_Store

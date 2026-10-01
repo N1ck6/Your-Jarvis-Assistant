@@ -100,7 +100,7 @@ class SystemSkill(Skill):
                 return await self.app.brain.redo()
             case "mute":
                 self.app.set_muted(True)
-                return Reply("Выключаю микрофон. Включить можно в трее или сочетанием Ctrl Alt M.", listen_after=False)
+                return Reply("Выключаю микрофон. Включить можно в трее или сочетанием Ctrl Alt K.", listen_after=False)
             case "unmute_mic":
                 self.app.set_muted(False)
                 return Reply("Слушаю.", reaction="reply", listen_after=False)

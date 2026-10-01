@@ -36,47 +36,26 @@ def _single_instance(wait_sec: float = 0) -> object | None:
             time.sleep(0.5)
 
 
-def _start_hotkeys(assistant, cfg: Settings) -> None:
-    try:
-        from pynput import keyboard
-
-        keyboard.GlobalHotKeys({
-            cfg.ui.hotkey_listen: lambda: assistant._threadsafe(assistant.listen_now),
-            cfg.ui.hotkey_mute: lambda: assistant._threadsafe(assistant.toggle_mute),
-            cfg.ui.hotkey_screen: lambda: assistant.submit(assistant.handle_text("что на экране")),
-        }).start()
-        _start_hold_to_dictate(assistant, cfg.ui.hotkey_dictation)
-    except Exception as exc:
-        log.warning("Горячие клавиши недоступны: %s", exc)
-
-
-def _start_hold_to_dictate(assistant, combo: str) -> None:
-    """Dictation while the combination is held; the text is pasted on release."""
-    from pynput import keyboard
-
+def _start_hotkeys(assistant, cfg: Settings):
     from assistant import winutil
+    from assistant.hotkeys import Hotkeys
 
-    target = set(keyboard.HotKey.parse(combo))
-    pressed: set = set()
-    active = False
-    listener: keyboard.Listener
+    keys = Hotkeys()
+    keys.on_press(cfg.ui.hotkey_listen, lambda: assistant._threadsafe(assistant.listen_now))
+    keys.on_press(cfg.ui.hotkey_mute, lambda: assistant._threadsafe(assistant.toggle_mute))
+    keys.on_press(cfg.ui.hotkey_screen, lambda: assistant.submit(assistant.handle_text("что на экране")))
+    keys.on_hold(cfg.ui.hotkey_dictation,
+                 start=lambda: assistant._threadsafe(
+                     lambda: assistant.start_dictation(until_pause=False, paste=winutil.paste_text)),
+                 stop=lambda: assistant._threadsafe(assistant.stop_dictation))
+    keys.start()
 
-    def on_press(key) -> None:
-        nonlocal active
-        pressed.add(listener.canonical(key))
-        if not active and target <= pressed:
-            active = True
-            assistant._threadsafe(lambda: assistant.start_dictation(until_pause=False, paste=winutil.paste_text))
-
-    def on_release(key) -> None:
-        nonlocal active
-        pressed.discard(listener.canonical(key))
-        if active and not target <= pressed:
-            active = False
-            assistant._threadsafe(assistant.stop_dictation)
-
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.start()
+    def report() -> None:
+        if keys.failed:
+            assistant.ui.notify("Горячие клавиши", "Не работают (заняты или неверны): " + ", ".join(keys.failed)
+                                + ". Поменяйте в Настройках → Клавиши.")
+    threading.Timer(2.0, report).start()
+    return keys
 
 
 def _start_voicelab(assistant, cfg: Settings):

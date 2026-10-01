@@ -32,7 +32,8 @@ class AudioCfg(BaseModel):
     output_device: str = ""
     sample_rate: int = 16000
     vad_threshold: float = 0.5
-    end_silence_ms: int = 700
+    end_silence_ms: int = 1000
+    wake_grace_ms: int = 2000
     max_utterance_sec: float = 15.0
     await_command_sec: float = 6.0
     pre_roll_ms: int = 400
@@ -167,7 +168,7 @@ class ExplainCfg(BaseModel):
 class UiCfg(BaseModel):
     tray: bool = True
     hotkey_listen: str = "<ctrl>+<alt>+j"
-    hotkey_mute: str = "<ctrl>+<alt>+m"
+    hotkey_mute: str = "<ctrl>+<alt>+k"
     hotkey_dictation: str = "<ctrl>+<alt>+d"   # hold to dictate
     hotkey_screen: str = "<ctrl>+<alt>+s"
     card_threshold_chars: int = 320

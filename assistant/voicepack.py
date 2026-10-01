@@ -91,12 +91,8 @@ class VoicePack:
 
 # Clean clips (with exact transcripts) that make a ~7 s reference for voice cloning. Shorter = faster synthesis.
 CLONE_REFS: dict[str, list[tuple[str, str]]] = {
-    "jarvis-og": [("reply1", "Да, сэр."), ("ok3", "Запрос выполнен, сэр."),
-                  ("not_found", "Чего вы пытаетесь добиться, сэр?"), ("thanks", "Всегда к вашим услугам, сэр.")],
     "jarvis-remaster": [("greet_day", "Добрый день, сэр. Чем я могу вам сегодня помочь?"),
                         ("stupid", "Очень тонкое замечание, сэр."), ("thanks", "Всегда к вашим услугам, сэр.")],
-    "jarvis-howdy": [("run", "Добрый день, сэр."), ("ready", "Мы подключены и готовы."),
-                     ("not_found", "Чего вы пытаетесь добиться, сэр?"), ("thanks", "Всегда к вашим услугам, сэр.")],
 }
 
 

@@ -58,7 +58,8 @@ class ListenerCore:
     """Pure frame processing, no audio device. Fed with 512-sample int16 frames."""
 
     def __init__(self, vad: SileroVad, wake: VoskWake, events: ListenerEvents, *, sr: int = 16000,
-                 vad_threshold: float = 0.5, end_silence_ms: int = 700, max_utterance_sec: float = 15.0,
+                 vad_threshold: float = 0.5, end_silence_ms: int = 1000, max_utterance_sec: float = 15.0,
+                 wake_grace_ms: int = 2000,
                  pre_roll_ms: int = 400) -> None:
         self.vad = vad
         self.wake = wake
@@ -67,6 +68,10 @@ class ListenerCore:
         self.th = vad_threshold
         self.frame_sec = FRAME / sr
         self.end_frames = max(1, int(end_silence_ms / 1000 / self.frame_sec))
+        # After "Джарвис" people often pause before the question: wait this long for it to start.
+        self.grace_frames = max(self.end_frames, int(wake_grace_ms / 1000 / self.frame_sec))
+        # Voiced frames after the wake point that mean "the question has started" (the name's tail is shorter).
+        self.question_frames = max(1, int(0.3 / self.frame_sec))
         self.max_frames = int(max_utterance_sec / self.frame_sec)
         self.hangover_frames = int(1.0 / self.frame_sec)  # keep feeding Vosk 1 s after speech
         self.segment_cap = int(6.0 / self.frame_sec)
@@ -81,6 +86,7 @@ class ListenerCore:
         self._capture: list[np.ndarray] = []
         self._capture_voiced = 0
         self._capture_silence = 0
+        self._capture_after = 0     # voiced frames since the capture started (wake point)
         self._capture_source = "wake"
         self._await_deadline = 0.0
         self._await_voiced = 0
@@ -138,6 +144,8 @@ class ListenerCore:
         self._capture = list(initial)
         self._capture_voiced = 1
         self._capture_silence = 0
+        # From a wake word the question still has to start; from AWAIT it is already being spoken.
+        self._capture_after = 0 if source == "wake" else self.question_frames
         self._capture_source = source
 
     # --- processing (listener thread) ---
@@ -191,10 +199,13 @@ class ListenerCore:
         self._capture.append(frame)
         if voiced:
             self._capture_voiced += 1
+            self._capture_after += 1
             self._capture_silence = 0
         else:
             self._capture_silence += 1
-        if self._capture_silence >= self.end_frames or len(self._capture) >= self.max_frames:
+        question_started = self._capture_after >= self.question_frames
+        limit = self.end_frames if question_started else self.grace_frames
+        if self._capture_silence >= limit or len(self._capture) >= self.max_frames:
             audio = np.concatenate(self._capture).astype(np.float32) / 32768.0
             source = self._capture_source
             self._capture = []

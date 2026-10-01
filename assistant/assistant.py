@@ -92,6 +92,7 @@ class Assistant:
                 VoskWake(self.cfg.resolve(wake_cfg.model), wake_cfg.phrases, wake_cfg.decoys, wake_cfg.stop_words),
                 events, sr=self.cfg.audio.sample_rate, vad_threshold=self.cfg.audio.vad_threshold,
                 end_silence_ms=self.cfg.audio.end_silence_ms, max_utterance_sec=self.cfg.audio.max_utterance_sec,
+                wake_grace_ms=self.cfg.audio.wake_grace_ms,
                 pre_roll_ms=self.cfg.audio.pre_roll_ms)
             self.mic = Microphone(self.listener, self.cfg.audio.input_device, self.cfg.audio.sample_rate)
         log.info("Модели загружены за %.1f с", time.perf_counter() - t)

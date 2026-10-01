@@ -18,8 +18,10 @@ input_device = ""          # "" = system default; name substring or index
 output_device = ""
 sample_rate = 16000
 vad_threshold = 0.5
-# Silence that ends an utterance.
-end_silence_ms = 700
+# Silence that ends an utterance. Commands have natural pauses ("напомни через 10 минут ... выключить плиту").
+end_silence_ms = 1000
+# After "Джарвис" wait this long for the question to start (people pause after the name).
+wake_grace_ms = 2000
 max_utterance_sec = 15.0
 # How long to wait for a command after a bare "Джарвис".
 await_command_sec = 6.0
@@ -165,7 +167,7 @@ linger_sec = 25
 [ui]
 tray = true
 hotkey_listen = "<ctrl>+<alt>+j"
-hotkey_mute = "<ctrl>+<alt>+m"
+hotkey_mute = "<ctrl>+<alt>+k"
 # Hold to dictate into the active window.
 hotkey_dictation = "<ctrl>+<alt>+d"
 hotkey_screen = "<ctrl>+<alt>+s"

@@ -70,6 +70,7 @@ class DeckWindow(QWidget):
         self.deck: Deck | None = None
         self.index = 0
         self._drag: QPoint | None = None
+        self._user_pos: QPoint | None = None  # where the user dragged the window (kept until restart)
         self._close_timer = QTimer(self, singleShot=True, interval=int(linger_sec * 1000))
         self._close_timer.timeout.connect(self.fade_out)
 
@@ -139,6 +140,7 @@ class DeckWindow(QWidget):
     def mouseMoveEvent(self, e) -> None:
         if self._drag is not None:
             self.move(e.globalPosition().toPoint() - self._drag)
+            self._user_pos = self.pos()
 
     def mouseReleaseEvent(self, _e) -> None:
         self._drag = None
@@ -152,9 +154,16 @@ class DeckWindow(QWidget):
             self.show_card(self.index - 1, manual=True)
 
     def _place(self) -> None:
+        """Bottom-right by default; after the user drags it, keep their spot (only clamp to the screen)."""
         self.adjustSize()
-        screen = QApplication.primaryScreen().availableGeometry()
-        self.move(screen.right() - self.width() - 24, screen.bottom() - self.height() - 24)
+        if self._user_pos is None:
+            screen = QApplication.primaryScreen().availableGeometry()
+            self.move(screen.right() - self.width() - 24, screen.bottom() - self.height() - 24)
+            return
+        screen = (QGuiApplication.screenAt(self._user_pos) or QApplication.primaryScreen()).availableGeometry()
+        x = min(max(self._user_pos.x(), screen.left()), screen.right() - self.width())
+        y = min(max(self._user_pos.y(), screen.top()), screen.bottom() - self.height())
+        self.move(x, y)
 
     def set_deck(self, deck: Deck) -> None:
         self.deck = copy.deepcopy(deck)

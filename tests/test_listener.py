@@ -113,3 +113,36 @@ def test_await_mode_captures_without_wake(tts):
     run(core, speech_16k(tts, "Поставь таймер на пять минут."))
     assert "speech" in log
     assert [e for e in log if isinstance(e, tuple) and e[0] == "utt"][0][1] == "await"
+
+
+def trimmed(tts, text):
+    pcm = speech_16k(tts, text)
+    loud = np.nonzero(np.abs(pcm) > 400)[0]
+    return pcm[loud[0]:loud[-1] + 1]  # exact pauses: drop the synthesizer's own silence
+
+
+def pause(sec):
+    return np.zeros(int(16000 * sec), dtype=np.int16)
+
+
+@pytest.mark.parametrize("parts,min_sec", [
+    (["Джарвис.", 0.9, "Какая погода будет завтра в Казани?"], 3.0),        # pause after the name
+    (["Джарвис.", 1.5, "Поставь таймер на пять минут."], 2.5),
+    (["Джарвис, напомни через десять минут", 0.8, "выключить плиту на кухне."], 3.5),  # pause inside the question
+])
+def test_whole_question_is_captured(tts, parts, min_sec):
+    log = []
+    core = make_core(log)
+    pcm = np.concatenate([pause(p) if isinstance(p, float) else trimmed(tts, p) for p in parts])
+    run(core, pcm)
+    utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
+    assert len(utt) == 1, utt          # one utterance, not cut in two
+    assert utt[0][2] >= min_sec
+
+
+def test_bare_wake_ends_after_grace(tts):
+    log = []
+    core = make_core(log)
+    run(core, np.concatenate([trimmed(tts, "Джарвис."), pause(2.0)]))  # the grace is 2 s
+    utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
+    assert len(utt) == 1 and utt[0][2] < 4.0

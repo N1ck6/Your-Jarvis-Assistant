@@ -44,6 +44,11 @@ class Reply:
     # The phrase looked like this skill's command but it cannot serve it ("открой что-нибудь послушать"):
     # the brain asks the router first and speaks this reply only if the router has nothing better.
     fallthrough: bool = False
+    # How to take the action back ("верни как было", "не то"): returns the reply to speak.
+    undo: Callable[[], Awaitable["Reply"]] | None = None
+    # A clarifying question in `speech` ("Закрыть Chrome или Яндекс Браузер?"): the next phrase goes here first;
+    # the handler returns None if the phrase is not an answer (it is then handled as a new request).
+    ask: Callable[[str], Awaitable["Reply | None"]] | None = None
 
 
 @dataclass

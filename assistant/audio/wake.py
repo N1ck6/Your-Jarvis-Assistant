@@ -42,6 +42,15 @@ class VoskWake:
         if not model_dir.exists():
             raise FileNotFoundError(f"Нет модели Vosk: {model_dir}")
         self._model = vosk.Model(str(model_dir))
+        # A custom wake word from the settings must be a word the model knows, otherwise it is never heard.
+        known = [p for p in phrases if self._model.vosk_model_find_word(p.lower()) >= 0]
+        if not known:
+            log.error("Кодовых слов %s нет в словаре Vosk, использую «джарвис»", phrases)
+            known = ["джарвис"]
+        elif len(known) < len(phrases):
+            log.warning("Нет в словаре Vosk, пропускаю: %s", ", ".join(set(phrases) - set(known)))
+        phrases = known
+        decoys = [d for d in decoys if self._model.vosk_model_find_word(d.lower()) >= 0 and d not in phrases]
         self._wake = _GrammarSpotter(self._model, phrases, decoys, sr)
         self._stop = _GrammarSpotter(self._model, stop_words, [], sr)
         log.info("Wake word: %s", ", ".join(phrases))

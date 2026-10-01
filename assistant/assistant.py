@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 import time
 from typing import Callable
@@ -21,7 +22,8 @@ from assistant.brain import Brain, Dialog
 from assistant.config import Settings
 from assistant.core import Card, Deck, State, UiPort
 from assistant.llm.hub import LlmHub
-from assistant.nlu import find_wake, normalize_command, strip_wake
+from assistant.log import private
+from assistant.nlu import find_wake, is_bare_wake, is_echo, normalize_command, strip_echo, strip_wake
 from assistant.skills.base import Reply, load_skills
 from assistant.speech import Speaker
 from assistant.stt import create_stt
@@ -29,6 +31,24 @@ from assistant.tts.manager import TtsManager
 from assistant.voicepack import VoicePack, load_pack
 
 log = logging.getLogger("assistant")
+
+
+def resample(samples, sr: int, target: int):
+    """Linear resampling: enough for recognizing short recorded clips."""
+    import numpy as np
+
+    if sr == target:
+        return samples.astype(np.float32)
+    n = int(len(samples) * target / sr)
+    return np.interp(np.linspace(0, len(samples) - 1, n), np.arange(len(samples)), samples).astype(np.float32)
+
+
+def answer_card_text(text: str) -> str:
+    """A long spoken answer as card paragraphs of two sentences (lists and line breaks are kept)."""
+    if "\n" in text.strip():
+        return text.strip()
+    sentences = re.split(r"(?<=[.!?…])\s+(?=[А-ЯЁA-Z0-9«])", text.strip())
+    return "\n".join(" ".join(sentences[i:i + 2]) for i in range(0, len(sentences), 2))
 
 
 class Assistant:
@@ -60,6 +80,15 @@ class Assistant:
         self._ready = threading.Event()
         self._dictation_paste: Callable[[str], None] | None = None
         self._muted_before_dictation = False
+        self._clip_texts: dict[int, str] = {}
+        self.interruptions = 0
+        from assistant.voiceprint import VoicePrint
+
+        self.voiceprint = VoicePrint()  # the model loads on first use
+        self._capture_waiter: asyncio.Future | None = None
+        # Words Jarvis is saying while the microphone already listens ("Да, сэр" after a bare wake word).
+        self._echo_guard = ""
+        self._await_until = 0.0
 
     # ------------------------------------------------------------------ startup
     def load_models(self) -> None:
@@ -79,6 +108,9 @@ class Assistant:
             log.exception("Голос %s не загрузился, переключаюсь на %s", self.tts.voice.id, self.tts.fallback_id)
             self.tts.set_voice(self.tts.fallback_id)
         if self.use_mic:
+            from assistant.setup_models import ensure_vosk
+
+            ensure_vosk(self.cfg.wake.model)  # first start of an installed build: models come on demand
             wake_cfg = self.cfg.wake
             events = ListenerEvents(
                 on_wake=lambda: self._threadsafe(self._on_wake),
@@ -108,6 +140,10 @@ class Assistant:
         log.info("Провайдеры: %s", self.llm.status())
         if self.mic:
             self.mic.start()
+        self._watch_devices()
+        asyncio.create_task(self._check_updates())
+        if self.pack is None and self.cfg.voice.pack != "none":
+            asyncio.create_task(self._fetch_packs())
         self._set_state(State.IDLE)
         self._ready.set()
         log.info("Готов. Скажите «%s» и команду.", self.cfg.assistant.name)
@@ -126,13 +162,73 @@ class Assistant:
         if self.state is State.IDLE:
             self.ui.set_state(State.IDLE, "локальная модель загружается…")
         await self.llm.local.warmup()
+        if self.cfg.router.model and self.cfg.router.model != self.cfg.llm.local.model:
+            await self.llm.local.warmup(self.cfg.router.model)
         if self.state is State.IDLE:
             self.ui.set_state(State.IDLE)
+
+    async def _fetch_packs(self) -> None:
+        """Recorded Jarvis reactions missing (a fresh installed build): download them in the background."""
+        from assistant.voicepack import download_packs
+
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, download_packs)
+        except Exception as exc:
+            log.warning("Реплики Джарвиса не скачались: %s", exc)
+            return
+        self.set_voice_pack(self.cfg.voice.pack)
+
+    async def _check_updates(self) -> None:
+        await asyncio.sleep(60)  # not during startup
+        while self.cfg.ui.check_updates:
+            from assistant import updates
+
+            news = await updates.check()
+            if news:
+                self.ui.notify("Обновление Джарвиса", f"На GitHub {news}")
+            await asyncio.sleep(6 * 3600)
+
+    # ------------------------------------------------------------------ audio devices
+    def _watch_devices(self) -> None:
+        from assistant.audio.devices import DeviceWatcher
+
+        self._devices = DeviceWatcher(lambda kinds: self._threadsafe(self._devices_changed, kinds))
+        self._devices.start()
+        asyncio.create_task(self._mic_watchdog())
+
+    def _devices_changed(self, kinds: set[str]) -> None:
+        asyncio.create_task(self._reopen_audio(kinds))
+
+    async def _reopen_audio(self, kinds: set[str]) -> None:
+        """Headphones plugged in / default device switched: reopen the microphone, speech and music outputs."""
+        from assistant.audio.player import GATE
+
+        def work() -> None:
+            if self.mic is not None:
+                self.mic.reopen(GATE.reinit)
+            else:
+                GATE.reinit()
+            self.player.refresh_device()
+
+        await asyncio.get_running_loop().run_in_executor(None, work)
+        if "output" in kinds:
+            await asyncio.get_running_loop().run_in_executor(None, self.music.reopen)
+        log.info("Звук переключён на новые устройства")
+
+    async def _mic_watchdog(self) -> None:
+        """A removed USB microphone does not raise errors, it just goes quiet: reopen it."""
+        while True:
+            await asyncio.sleep(3)
+            if self.mic is not None and self.mic.silent_for > 5:
+                log.warning("Микрофон молчит %.0f с, переоткрываю", self.mic.silent_for)
+                await self._reopen_audio({"input"})
 
     def wait_ready(self, timeout: float | None = None) -> bool:
         return self._ready.wait(timeout)
 
     async def shutdown(self) -> None:
+        if getattr(self, "_devices", None) is not None:
+            self._devices.stop()
         self.music.stop()
         if self.mic:
             self.mic.stop()
@@ -178,15 +274,30 @@ class Assistant:
         from assistant.settings_schema import RESTART_KEYS
 
         new = validate_changes(changes)  # raises on bad values, nothing is saved then
+        old_models = {self.cfg.llm.local.model, self.cfg.llm.local.vision_model, self.cfg.router.model}
         for key, value in changes.items():
             save_override(key, value)
         update_in_place(self.cfg, new)
+        if {"llm.local.model", "llm.local.vision_model", "router.model"} & set(changes):
+            # The old model would sit in video memory for keep_alive (30 min) next to the new one.
+            kept = {self.cfg.llm.local.model, self.cfg.llm.local.vision_model, self.cfg.router.model}
+            for model in old_models - kept:
+                self.submit(self.llm.local.unload(model))
+            self.submit(self.llm.local.warmup())
         self.tts.rate = self.cfg.tts.rate
         self.player.volume = self.cfg.tts.volume
         self.music.volume = self.cfg.music.volume
         self.music.duck_volume = self.cfg.music.duck_volume
         if "voice.pack" in changes:
             self.set_voice_pack(self.cfg.voice.pack)
+        if "ui.autostart" in changes:
+            from assistant import autostart
+
+            autostart.set_enabled(bool(self.cfg.ui.autostart))
+        if "privacy.log_phrases" in changes:
+            from assistant.log import set_log_phrases
+
+            set_log_phrases(self.cfg.privacy.log_phrases)
         if "tts.voice" in changes:
             threading.Thread(target=self._switch_voice, args=(self.cfg.tts.voice,), daemon=True).start()
         self.brain.router.reset_catalog()
@@ -198,10 +309,13 @@ class Assistant:
 
     def _switch_voice(self, voice_id: str) -> None:
         try:
-            self.tts.set_voice(voice_id)
+            spec = self.tts.set_voice(voice_id)
         except Exception:
             log.exception("Голос %s не загрузился", voice_id)
             self.ui.notify("Голос", f"Не удалось загрузить голос {voice_id}, остаётся прежний")
+            return
+        if spec.engine == "clone":
+            self.tts.release("silero")  # it only spoke while the clone was loading
 
     def restart(self) -> None:
         """Starts a fresh instance (it waits for this one to release the lock) and exits."""
@@ -226,12 +340,21 @@ class Assistant:
         clip = self.pack.pick(reaction) if self.pack else None
         if clip is None:
             return False
-        await self.speaker.play_clip(clip, reaction)
+        await self.speaker.play_clip(clip, await self.clip_text(clip))
         return True
+
+    async def clip_text(self, clip: AudioClip) -> str:
+        """What a recorded clip says ("Да, сэр."): the microphone hears it too, so echo checks need the words."""
+        key = id(clip)
+        if key not in self._clip_texts and self.stt is not None:
+            audio = resample(clip.samples, clip.sr, 16000)
+            self._clip_texts[key] = await asyncio.get_running_loop().run_in_executor(None, self.stt.transcribe, audio)
+        return self._clip_texts.get(key, "")
 
     # ------------------------------------------------------------------ control API (used by skills/UI)
     def interrupt(self) -> None:
         """Stop talking and drop the running request (except the caller itself)."""
+        self.interruptions += 1  # a ringing alarm stops when the user says anything to Jarvis
         self.speaker.stop()
         task = self._task
         if task and not task.done() and task is not asyncio.current_task():
@@ -262,6 +385,23 @@ class Assistant:
         self._earcon(earcons.WAKE)
         self.listener.to_await(self.cfg.audio.await_command_sec)
         self._set_state(State.LISTENING)
+
+    def _skill(self, name: str):
+        return next((s for s in self.skills if s.name == name), None)
+
+    def deck_paged(self, index: int) -> None:
+        """The user flipped the card window by hand: the explanation speaks that card."""
+        explain = self._skill("explain")
+        if explain is not None:
+            explain.user_paged(index)
+
+    def deck_closed(self) -> None:
+        """Esc / ✕ on the card window: stop talking about it."""
+        explain = self._skill("explain")
+        if explain is not None and explain.narration is not None:
+            explain.user_closed()
+        else:
+            self.speaker.stop()
 
     def request_exit(self) -> None:
         async def bye() -> None:
@@ -308,7 +448,8 @@ class Assistant:
         self._set_state(State.THINKING, "распознаю диктовку")
         t = time.perf_counter()
         text = await asyncio.get_running_loop().run_in_executor(None, self.stt.transcribe_long, utt.audio)
-        log.info("Диктовка %.1f с за %.0f мс: %s", utt.audio.size / 16000, (time.perf_counter() - t) * 1000, text[:120])
+        log.info("Диктовка %.1f с за %.0f мс: %s", utt.audio.size / 16000, (time.perf_counter() - t) * 1000,
+                 private(text[:120]))
         if text:
             await asyncio.get_running_loop().run_in_executor(None, paste, text)
             self._earcon(earcons.DONE)
@@ -339,7 +480,7 @@ class Assistant:
         own = set(normalize_command(self.speaker.recent_text(), strip_polite=False).split())
         stops = [w for w in heard if w in self.cfg.wake.stop_words and w not in own]
         if not stops:
-            log.info("Стоп-слово «%s» не подтвердилось (слышно: «%s»), продолжаю", word, text[:80])
+            log.info("Стоп-слово «%s» не подтвердилось (слышно: «%s»), продолжаю", word, private(text[:80]))
             return
         log.info("Прерван словом «%s», слушаю команду", stops[0])
         self.interrupt()
@@ -349,10 +490,34 @@ class Assistant:
         self._set_state(State.LISTENING, "слушаю новую команду")
 
     def _on_await_timeout(self) -> None:
+        waiter, self._capture_waiter = self._capture_waiter, None
+        if waiter is not None and not waiter.done():
+            waiter.set_result(None)
         if self.state in (State.LISTENING,):
             self._set_state(State.IDLE)
 
+    async def record_utterance(self, timeout: float):
+        """The next phrase as audio, not handled as a command (voice enrollment). None if nothing was said."""
+        if not self.listener:
+            return None
+        self._capture_waiter = asyncio.get_running_loop().create_future()
+        self._earcon(earcons.WAKE)
+        self.listener.to_await(timeout, "capture")
+        self._set_state(State.LISTENING, "запись фразы")
+        try:
+            return await asyncio.wait_for(asyncio.shield(self._capture_waiter), timeout + 16)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self._capture_waiter = None
+
     def _on_utterance(self, utt: Utterance) -> None:
+        if utt.source == "capture":
+            waiter = self._capture_waiter
+            if waiter is not None and not waiter.done():
+                waiter.set_result(utt.audio)
+            self._set_state(State.THINKING)
+            return
         if utt.source == "dictation":
             asyncio.create_task(self._finish_dictation(utt))
             return
@@ -361,45 +526,112 @@ class Assistant:
     async def _process_audio(self, utt: Utterance) -> None:
         self._set_state(State.THINKING)
         t = time.perf_counter()
-        text = await asyncio.get_running_loop().run_in_executor(None, self.stt.transcribe, utt.audio)
-        log.info("Распознано за %.0f мс: «%s»", (time.perf_counter() - t) * 1000, text)
+        res = await asyncio.get_running_loop().run_in_executor(None, self.stt.recognize, utt.audio)
+        text = res.text
+        log.info("Распознано за %.0f мс: «%s» (уверенность %.2f, речь %.1f с)", (time.perf_counter() - t) * 1000,
+                 private(text), res.confidence, utt.voiced_sec)
         wake = self.cfg.wake
-        if utt.source == "wake" and wake.verify_with_stt and text and not find_wake(text, wake.phrases, wake.verify_ratio):
-            log.info("Ложное срабатывание кодового слова, игнорирую")
+        if utt.source == "hot" and self._not_for_me(utt, res):
             self._set_state(State.IDLE)
             return
-        query = strip_wake(text, wake.phrases, wake.verify_ratio)
+        if utt.source in ("wake", "hot") and not utt.barge_in and not await self._is_owner(utt.audio):
+            self._set_state(State.IDLE)
+            return
+        if utt.source == "wake":
+            if wake.verify_with_stt and text and not find_wake(text, wake.phrases, wake.verify_ratio):
+                log.info("Ложное срабатывание кодового слова, игнорирую")
+                self._set_state(State.IDLE)
+                return
+            if utt.barge_in:
+                text = self._after_name(text)
+        guard, self._echo_guard = self._echo_guard, ""
+        if guard and utt.source == "await":
+            text = strip_echo(text, guard)  # "Да, сэр. Сколько треков в музыке?" -> the question only
+        # Outside a wake capture the name must be clear: "кто такой Дарвин" is not "Джарвис".
+        query = strip_wake(text, wake.phrases, wake.verify_ratio if utt.source == "wake" else 90)
+        if utt.source == "wake" and (len(query) < 2 or is_bare_wake(text, wake.phrases)):
+            await self._bare_wake()
+            return
         if len(query) < 2:
-            if utt.source == "wake":
-                # Only "Джарвис" was said: "Слушаю, сэр" and wait for the command.
-                if self.cfg.voice.reply_on_bare_wake:
-                    await self.react("reply")
+            if guard and time.monotonic() < self._await_until and self.listener:
+                # It was only Jarvis's own "Да, сэр" in the microphone: keep waiting for the command.
+                self.listener.to_await(self._await_until - time.monotonic())
                 self._set_state(State.LISTENING)
-                if self.listener:
-                    self.listener.to_await(self.cfg.audio.await_command_sec)
             else:
                 self._set_state(State.IDLE)
             return
-        await self.handle_text(query)
+        await self.handle_text(query, addressed=utt.source != "hot")
+
+    async def _is_owner(self, audio) -> bool:
+        """Owner-only mode: someone else's "Джарвис" (TV, guests) is ignored."""
+        if not (self.cfg.wake.owner_only and self.voiceprint.enrolled):
+            return True
+        sim = await asyncio.get_running_loop().run_in_executor(None, self.voiceprint.similarity, audio)
+        if sim is not None and sim < self.cfg.wake.owner_threshold:
+            log.info("Чужой голос (сходство %.2f), игнорирую", sim)
+            return False
+        return True
+
+    def _not_for_me(self, utt: Utterance, res) -> bool:
+        """The hot window after an answer hears everyone: TV, people in the room, Jarvis's own echo."""
+        reason = ""
+        if utt.voiced_sec < 0.45 or not res.text:
+            reason = "слишком коротко"
+        elif res.confidence < 0.55:
+            reason = f"неразборчиво ({res.confidence:.2f})"
+        elif is_echo(res.text, self.speaker.last_text):
+            reason = "эхо собственного ответа"
+        if reason:
+            log.info("Горячее окно: %s, игнорирую", reason)
+        return bool(reason)
+
+    def _after_name(self, text: str) -> str:
+        """Barge-in: the recording may start with Jarvis's own words, the command follows the name."""
+        span = find_wake(text, self.cfg.wake.phrases, self.cfg.wake.verify_ratio)
+        if span is None:
+            return text
+        after = text[span[1]:].strip(" ,.!?")
+        if len(after) >= 2:
+            return text[span[0]:]
+        own = set(normalize_command(self.speaker.last_text, strip_polite=False).split())
+        before = [w for w in text[:span[0]].split() if normalize_command(w, strip_polite=False) not in own]
+        return " ".join(before + [text[span[0]:span[1]]])
+
+    async def _bare_wake(self) -> None:
+        """Only "Джарвис" was said: answer "Да, сэр" and wait for the command. The microphone listens
+        while the reply plays, so a question started over it is not lost; the reply is cut from it."""
+        seconds = self.cfg.audio.await_command_sec
+        self._await_until = time.monotonic() + seconds
+        if self.listener:
+            self.listener.to_await(seconds)
+        self._set_state(State.LISTENING)
+        clip = self.pack.pick("reply") if (self.pack and self.cfg.voice.reply_on_bare_wake) else None
+        if clip is not None:
+            self._echo_guard = await self.clip_text(clip)
+            await self.speaker.play_clip(clip, self._echo_guard)
+            if self.state is State.SPEAKING:
+                self._set_state(State.LISTENING)
 
     # ------------------------------------------------------------------ main request path
-    async def handle_text(self, query: str) -> None:
-        """Entry point for recognized speech and typed questions."""
+    async def handle_text(self, query: str, addressed: bool = True) -> None:
+        """Entry point for recognized speech and typed questions.
+        addressed=False: heard in the hot window without the name, it may be meant for someone else."""
         if asyncio.current_task() is not self._task:
             self.interrupt()
             self._task = asyncio.current_task()
         self._set_state(State.THINKING, query)
-        log.info("Запрос: %s", query)
+        log.info("Запрос: %s", private(query))
+        self.ui.chat_add("user", query)
         started = time.perf_counter()
         listen_after = True
         try:
-            reply = await self.brain.handle(query)
-            listen_after = await self._deliver(reply, started)
+            reply = await self.brain.handle(query, addressed=addressed)
+            listen_after = await self._deliver(reply, started, query)
             while self.brain.extra:
-                listen_after = await self._deliver(self.brain.extra.pop(0), started)
+                listen_after = await self._deliver(self.brain.extra.pop(0), started, query)
             while self.brain.deferred:
                 skill, intent = self.brain.deferred.pop(0)
-                listen_after = await self._deliver(await skill.handle(intent), started)
+                listen_after = await self._deliver(await skill.handle(intent), started, query)
         except asyncio.CancelledError:
             log.info("Запрос отменён")
             self.brain.deferred.clear()
@@ -410,17 +642,28 @@ class Assistant:
             self._earcon(earcons.ERROR)
             await self.speaker.say("Что-то пошло не так, подробности в логе.")
         if self._task is asyncio.current_task():
-            self._after_answer(listen_after)
+            self._after_answer(listen_after, expect_answer=self.brain.expects_answer())
 
-    async def _deliver(self, reply: Reply, started: float) -> bool:
+    async def _deliver(self, reply: Reply, started: float, query: str = "") -> bool:
         if reply.spoken:
             return reply.listen_after
         text = ""
+        shown = False
+
+        def show_card(answer: str) -> None:
+            """Long answers also go to the card window, as soon as the whole text is known."""
+            nonlocal shown
+            if not shown and answer and not answer.startswith("[") and len(answer) > self.cfg.ui.card_threshold_chars:
+                shown = True
+                title = (query[:1].upper() + query[1:]).rstrip("?.!")[:70] if query else "Ответ"
+                self.ui.show_deck(Deck(title=title, cards=[Card("", answer_card_text(answer), "")], done=True))
+
         use_reaction = reply.reaction and (reply.reaction != "ok" or self.cfg.voice.ok_for_actions)
         if use_reaction and await self.react(reply.reaction):
             text = f"[{reply.reaction}] {reply.speech}".strip()
         elif reply.stream is not None:
             first = True
+            parts: list[str] = []
 
             async def timed():
                 nonlocal first
@@ -429,22 +672,28 @@ class Assistant:
                         first = False
                         log.info("Первый токен через %.2f с (%s)", time.perf_counter() - started,
                                  self.llm.last_provider or "-")
+                    parts.append(delta)
                     yield delta
+                show_card("".join(parts).strip())  # the model is done long before the voice is
 
             text = await self.speaker.speak(timed())
         elif reply.speech:
             text = await self.speaker.say(reply.speech)
-        if text and not text.startswith("[") and len(text) > self.cfg.ui.card_threshold_chars:
-            self.ui.show_deck(Deck(title="Ответ", cards=[Card("", text, "")], done=True))
-        log.info("Ответ за %.2f с: %s", time.perf_counter() - started, text[:200])
+        show_card(text)
+        log.info("Ответ за %.2f с: %s", time.perf_counter() - started, private(text[:200]))
+        if text:
+            self.ui.chat_add("assistant", text)
         return reply.listen_after or reply.confirm is not None
 
-    def _after_answer(self, listen_after: bool) -> None:
-        if self.listener and listen_after and self.mic and not self.mic.paused:
+    def _after_answer(self, listen_after: bool, expect_answer: bool = False) -> None:
+        if self.listener and (listen_after or expect_answer) and self.mic and not self.mic.paused:
             # Hot window: follow-up without the wake word. Short delay skips the speaker echo tail.
+            # After a question ("Закрыть Chrome или Яндекс Браузер?", "Удалить?") a short "да" must pass.
+            source = "await" if expect_answer else "hot"
+
             def open_window() -> None:
                 if self.listener and self.listener.mode is Mode.WAIT and self.state is not State.MUTED:
-                    self.listener.to_await(self.cfg.assistant.hot_window_sec)
+                    self.listener.to_await(self.cfg.assistant.hot_window_sec, source)
                     self._set_state(State.LISTENING, "можно без «Джарвис»")
             asyncio.get_running_loop().call_later(0.25, open_window)
         elif self.state is not State.MUTED:

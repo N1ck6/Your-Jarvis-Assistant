@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from assistant.llm.providers import Msg
+from assistant.log import private
 from assistant.paths import DATA_DIR
 
 if TYPE_CHECKING:
@@ -27,38 +28,38 @@ log = logging.getLogger("router")
 PHRASEBOOK = DATA_DIR / "phrasebook.json"
 ANSWERS = DATA_DIR / "answer_cache.json"
 
-PROMPT = """Ты — маршрутизатор голосового ассистента. Реши, что делать с запросом пользователя.
-1) Если запрос можно выполнить командами из списка (в том числе погода, файлы, диск, музыка, таймеры) — ВСЕГДА
-   выбирай kind "commands" и верни команды в точной форме из списка, подставив значения (несколько — по порядку).
-   Короткие уточнения («а завтра?», «а в Казани?», «ещё громче», «закрой его») относятся к предыдущей команде:
-   верни её же с новыми значениями и context = true.
-2) Фактический вопрос, где важна точность: люди, возраст, даты, числа, события, новости, курсы, цены, рекорды,
-   расписания — kind "web".
-3) Объяснение понятий, совет, мнение, разговор, шутка — kind "chat".
-Для "web" и "chat" в query перепиши запрос самодостаточно, с учётом контекста (замени «он», «это» и т. п.).
-context = true, если без предыдущих реплик запрос непонятен.
+PROMPT = """Ты — маршрутизатор голосового ассистента. Выбери один вариант:
+1) "commands" — запрос выполним командами из списка. Верни команды в точной форме из списка с подставленными
+   значениями (несколько — по порядку). Сюда же: погода и как одеться, диск и память компьютера, музыка, таймеры,
+   дела и покупки. Короткое уточнение к прошлой команде («а завтра?», «ещё громче», «закрой его») — та же команда
+   с новыми значениями и context = true.
+2) "web" — нужен точный или свежий факт: люди, даты, числа, события, новости, курсы, цены, счёт матчей, расписания.
+3) "chat" — объяснение понятий, совет, мнение, разговор, шутка.
+4) "ignore" — обрывок, бессмыслица, одно невнятное слово или фраза явно не ассистенту (разговор с другим человеком,
+   звук телевизора). Никогда не угадывай команду по невнятному слову.
+Для "web" и "chat" в query перепиши запрос самодостаточно, с учётом прошлых реплик (замени «он», «это» и т. п.).
 
 Команды:
 {catalog}
 
-Отвечай только JSON: {{"kind": "commands"|"web"|"chat", "commands": [...], "query": "...", "fresh": true|false, "context": true|false}}"""
+Ответь ОДНОЙ строкой в одном из форматов:
+К: <команда>; <команда>   — команды из списка (К+: если запрос непонятен без прошлых реплик)
+W: <вопрос>               — нужен свежий факт из интернета
+F: <вопрос>               — факт, который не меняется со временем
+C: <запрос>               — разговор, объяснение, совет
+I                         — игнорировать
+Обычно нужна ровно одна команда; несколько — только если пользователь сам просит несколько действий.
+Жалоба «не слышно», «тихо» — это громче; «не дай забыть через N минут» — таймер с напоминанием;
+место на компе — это диск, а оперативка — это память; «что я выделил» — команды с выделенным текстом."""
 
-SCHEMA = {
-    "type": "object",
-    "properties": {
-        "kind": {"type": "string", "enum": ["commands", "web", "chat"]},
-        "commands": {"type": "array", "items": {"type": "string"}},
-        "query": {"type": "string"},
-        "fresh": {"type": "boolean"},
-        "context": {"type": "boolean"},
-    },
-    "required": ["kind"],
-}
+# One short line instead of JSON: ~5 output tokens instead of ~35, the answer comes in ~0.4 s instead of ~1.1 s
+# on qwen3:8b with the same accuracy (scripts/router_bench.py). JSON answers are still understood.
+_LINE = re.compile(r"^\s*(К\+|K\+|К|K|W|F|C|С|I)\s*:?\s*(.*)$")
 
 
 @dataclass
 class Decision:
-    kind: str                       # commands | web | chat
+    kind: str                       # commands | web | chat | ignore
     commands: list[str] = field(default_factory=list)
     query: str = ""
     fresh: bool = True
@@ -73,6 +74,17 @@ class Turn:
 
 
 def _parse(raw: str) -> dict | None:
+    line = raw.strip().splitlines()[0] if raw.strip() else ""
+    if m := _LINE.match(line):
+        tag, rest = m.group(1).upper().replace("К", "K").replace("С", "C"), m.group(2).strip()
+        if tag.startswith("K"):
+            return {"kind": "commands", "commands": [c.strip(" .") for c in rest.split(";") if c.strip(" .")],
+                    "context": tag == "K+"}
+        if tag in ("W", "F"):
+            return {"kind": "web", "query": rest, "fresh": tag == "W"}
+        if tag == "C":
+            return {"kind": "chat", "query": rest}
+        return {"kind": "ignore"}
     m = re.search(r"\{.*\}", raw, re.S)
     if not m:
         return None
@@ -107,6 +119,7 @@ class Router:
         self.answers = _JsonStore(ANSWERS, 500)
         self._catalog = ""
         self._candidates: dict[str, list[str]] = {}
+        self._model_missing = ""   # the configured router model is not installed: use the main one
 
     # ------------------------------------------------------------------ catalog
     def catalog(self) -> str:
@@ -141,13 +154,21 @@ class Router:
         self._candidates.pop(norm, None)
         self.phrasebook.data[norm] = {"commands": commands, "ts": time.time(), "uses": 0}
         self.phrasebook.save()
-        log.info("Запомнил формулировку «%s» → %s", norm, commands)
+        log.info("Запомнил формулировку «%s» → %s", private(norm), commands)
 
     def forget(self, norm: str) -> bool:
         if self.phrasebook.data.pop(norm, None) is not None:
             self.phrasebook.save()
             return True
         return False
+
+    def drop_candidate(self, norm: str) -> None:
+        """"не то": a mapping waiting for its second confirmation is dropped too."""
+        self._candidates.pop(norm, None)
+
+    def forget_answer(self, key: str) -> None:
+        if self.answers.data.pop(key, None) is not None:
+            self.answers.save()
 
     # ------------------------------------------------------------------ answer cache (saves API tokens)
     def cached_answer(self, query: str) -> str | None:
@@ -171,19 +192,31 @@ class Router:
             return ["local"]
         return [p for p in self.app.cfg.llm.info_chain if p != "local"] or ["local"]
 
-    async def route(self, text: str, turns: list[Turn]) -> Decision | None:
+    async def route(self, text: str, turns: list[Turn], addressed: bool = True) -> Decision | None:
         cfg = self.app.cfg.router
         if not cfg.enabled:
             return None
         history = "\n".join(f"- пользователь: «{t.text}» → {t.did}" for t in turns[-cfg.context_turns:]) or "- (нет)"
+        how = ("Пользователь обратился по имени." if addressed else
+               "Фраза прозвучала сразу после ответа ассистента БЕЗ обращения по имени: если она не похожа на "
+               "продолжение разговора с ассистентом или на команду ему — kind \"ignore\".")
         messages = [Msg("system", PROMPT.format(catalog=self.catalog())),
-                    Msg("user", f"Последние запросы:\n{history}\n\nНовый запрос: «{text}»")]
+                    Msg("user", f"Последние запросы:\n{history}\n\n{how}\nНовый запрос: «{text}»")]
         chain = self._provider_chain()
         t = time.perf_counter()
         try:
             if chain == ["local"]:
-                raw = await asyncio.wait_for(self.app.llm.local.complete(messages, fmt=SCHEMA, max_tokens=160),
-                                             timeout=cfg.timeout_sec)
+                model = cfg.model if cfg.model and cfg.model != self._model_missing else ""
+                try:
+                    raw = await asyncio.wait_for(self.app.llm.local.complete(messages, max_tokens=120, model=model),
+                                                 timeout=cfg.timeout_sec)
+                except Exception as exc:
+                    if not model or "not found" not in str(exc).lower():
+                        raise
+                    log.warning("Модель маршрутизатора %s не скачана, использую основную", model)
+                    self._model_missing = model
+                    raw = await asyncio.wait_for(self.app.llm.local.complete(messages, max_tokens=120),
+                                                 timeout=cfg.timeout_sec)
             else:
                 raw = await asyncio.wait_for(self.app.llm.complete(chain, messages, web=False, max_tokens=160),
                                              timeout=cfg.timeout_sec)
@@ -191,8 +224,8 @@ class Router:
             log.warning("Маршрутизатор недоступен: %s", exc)
             return None
         data = _parse(raw)
-        log.info("Маршрутизатор %.2f с (%s): %s", time.perf_counter() - t, chain[0], raw.strip()[:200])
-        if not data or data.get("kind") not in ("commands", "web", "chat"):
+        log.info("Маршрутизатор %.2f с (%s): %s", time.perf_counter() - t, chain[0], private(raw.strip()[:200]))
+        if not data or data.get("kind") not in ("commands", "web", "chat", "ignore"):
             return None
         commands = [str(c).strip() for c in data.get("commands") or [] if str(c).strip()][:4]
         kind = data["kind"]

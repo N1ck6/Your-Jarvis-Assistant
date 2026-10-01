@@ -7,10 +7,11 @@ import logging
 import re
 import time
 from collections import deque
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable
 
 from assistant.llm.hub import FAIL_TEXT
 from assistant.llm.providers import LocalTurn, Msg
+from assistant.log import private
 from assistant.nlu import NO, YES, normalize_command, split_compound
 from assistant.router import Router, Turn
 from assistant.skills.base import Intent, Reply, Skill, Tool
@@ -35,6 +36,7 @@ INFO_ADDON = """Если вопрос про факты, новости, цен�
 
 LOCAL_ADDON = """У тебя есть инструменты для действий на компьютере. Если пользователь просит что-то сделать —
 вызови подходящий инструмент, а не описывай действие словами. Никогда не выдумывай результат действия.
+Получив результат инструмента, не повторяй его дословно: сразу ответь на вопрос пользователя 1–2 фразами.
 Если нужен свежий факт из интернета — вызови ask_internet."""
 
 # Questions that need facts or fresh data go to the cloud.
@@ -50,6 +52,20 @@ _SMALLTALK = re.compile(
     r"пока|расскажи (шутку|анекдот|что-нибудь)|ты кто|как тебя зовут|что делаешь|чем занят)"
 )
 CONFIRM_TTL_SEC = 20
+# Commands about other commands: they never become "the last action".
+_META = {"again", "repeat", "stop", "wrong", "undo", "thanks"}
+
+
+def _chain_undo(undos: list) -> Callable[[], Awaitable[Reply]]:
+    """Several actions in one phrase are taken back in reverse order."""
+    if len(undos) == 1:
+        return undos[0]
+
+    async def run() -> Reply:
+        said = [r.speech for r in [await u() for u in reversed(undos)] if r.speech]
+        return Reply(" ".join(said) or "Отменил.")
+
+    return run
 
 ASK_INTERNET = Tool("ask_internet", "Найти свежую информацию в интернете и ответить на фактический вопрос.",
                     {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]},
@@ -109,6 +125,12 @@ class Brain:
         self._turn_used_tools = False
         # A dangerous action waiting for "да": (callback, deadline).
         self.pending: tuple | None = None
+        # A clarifying question waiting for an answer ("Chrome или Яндекс Браузер?"): (handler, deadline).
+        self.asking: tuple | None = None
+        # "не то" / "верни как было": how to take back the last action, and how its phrase was understood.
+        self.last_undo: Callable[[], Awaitable[Reply]] | None = None
+        self.last_route: tuple[str, str] | None = None     # (normalized phrase, skill | phrasebook | router)
+        self.last_answer_key = ""                            # cache key of the last cloud answer
         # Last few requests and what was done: context for the router and "ещё раз".
         self.turns: deque[Turn] = deque(maxlen=6)
         self.last_command: tuple[Skill, Intent] | None = None
@@ -151,6 +173,50 @@ class Brain:
     def _remember_confirm(self, reply: Reply) -> None:
         if reply.confirm is not None:
             self.pending = (reply.confirm, time.monotonic() + CONFIRM_TTL_SEC)
+        if reply.ask is not None:
+            self.asking = (reply.ask, time.monotonic() + CONFIRM_TTL_SEC)
+
+    def expects_answer(self) -> bool:
+        """Jarvis has just asked something: the next short "да" / "хром" must not be filtered out."""
+        now = time.monotonic()
+        return any(p is not None and now < p[1] for p in (self.pending, self.asking))
+
+    async def _resolve_ask(self, text: str) -> Reply | None:
+        if self.asking is None:
+            return None
+        handler, deadline = self.asking
+        self.asking = None
+        if time.monotonic() > deadline:
+            return None
+        norm = normalize_command(text, strip_polite=False)
+        if NO.match(norm):
+            return Reply("Хорошо, не буду.", listen_after=False)
+        reply = await handler(norm)
+        if reply is not None:
+            self._remember_confirm(reply)
+        return reply
+
+    async def undo_last(self, forget: bool) -> Reply:
+        """"верни как было" (forget=False) and "не то" (forget=True: the phrase was misunderstood)."""
+        forgot = False
+        if forget and self.last_route and self.last_route[1] in ("phrasebook", "router"):
+            forgot = self.router.forget(self.last_route[0])
+            self.router.drop_candidate(self.last_route[0])
+            log.info("Забываю формулировку «%s»", private(self.last_route[0]))
+        if forget and self.last_answer_key:
+            self.router.forget_answer(self.last_answer_key)
+            self.last_answer_key = ""
+        undo, self.last_undo = self.last_undo, None
+        if undo is not None:
+            reply = await undo()
+            log.info("Отменено: %s", reply.speech or "-")
+            tail = " Эту формулировку я забыл, скажите иначе." if forgot else ""
+            return Reply((reply.speech or "Отменил.") + tail, listen_after=forget)
+        if forgot:
+            return Reply("Понял, эту формулировку забыл. Скажите иначе.")
+        if forget:
+            return Reply("Уточните, что вы имели в виду.")
+        return Reply("Здесь нечего отменять.", listen_after=False)
 
     async def _resolve_pending(self, text: str) -> Reply | None:
         """Answers a pending "are you sure?" question; None if the phrase is something else."""
@@ -169,12 +235,17 @@ class Brain:
         return None
 
     # ------------------------------------------------------------------ main entry
-    async def handle(self, text: str) -> Reply:
-        """regex modules -> compound split -> learned phrases -> model router -> answer. Streams are spoken by the caller."""
+    async def handle(self, text: str, addressed: bool = True) -> Reply:
+        """regex modules -> compound split -> learned phrases -> model router -> answer. Streams are spoken by the caller.
+        addressed=False: the phrase came without the name (hot window), the router may decide it was not for Jarvis."""
         confirmed = await self._resolve_pending(text)
         if confirmed is not None:
             self._note(text, confirmed.speech or "подтверждено")
             return confirmed
+        answered = await self._resolve_ask(text)
+        if answered is not None:
+            self._note(text, answered.speech or "уточнено")
+            return answered
         norm = normalize_command(text)
 
         # Compound first: otherwise "закрой браузер и включи музыку" becomes one "закрой <...>".
@@ -182,7 +253,7 @@ class Brain:
         if len(parts) > 1:
             hits = [self.match_skill(p) for p in parts]
             if all(hits):
-                log.info("Составная команда: %s", parts)
+                log.info("Составная команда: %s", private(parts))
                 return await self._run_commands(text, hits)  # type: ignore[arg-type]
 
         fallback: Reply | None = None
@@ -200,7 +271,7 @@ class Brain:
             follow = skill.followup(norm, last)
             if follow is not None:
                 follow.text, follow.raw = norm, text
-                log.info("Уточнение к %s.%s: %s", skill.name, follow.action, follow.slots)
+                log.info("Уточнение к %s.%s: %s", skill.name, follow.action, private(follow.slots))
                 return await self._run_commands(text, [(skill, follow)])
 
         learned = self.router.learned(norm)
@@ -208,28 +279,34 @@ class Brain:
             hits = [self.match_skill(c) for c in learned]
             if all(hits):
                 log.info("Выученная формулировка → %s", learned)
-                return await self._run_commands(text, hits)  # type: ignore[arg-type]
+                return await self._run_commands(text, hits, "phrasebook")  # type: ignore[arg-type]
             self.router.forget(norm)
 
-        decision = await self.router.route(text, list(self.turns))
+        decision = await self.router.route(text, list(self.turns), addressed=addressed)
+        if decision and decision.kind == "ignore" and fallback is None:
+            if not addressed:
+                log.info("Похоже, это сказано не мне — молчу")
+                return Reply(spoken=True, listen_after=False)
+            return Reply("Не расслышал, повторите.")
         if decision and decision.kind == "commands":
             hits = [self.match_skill(c) for c in decision.commands]
             if all(hits):
-                log.info("Маршрутизатор: «%s» → %s", norm, decision.commands)
+                log.info("Маршрутизатор: «%s» → %s", private(norm), decision.commands)
                 if not decision.context:
                     self.router.learn(norm, decision.commands)
-                return await self._run_commands(text, hits)  # type: ignore[arg-type]
+                return await self._run_commands(text, hits, "router")  # type: ignore[arg-type]
             log.info("Маршрутизатор предложил неизвестные команды %s, отвечаю как на вопрос", decision.commands)
             decision = None
         if fallback is not None:
             return fallback
 
-        if decision is None:
+        if decision is None or decision.kind == "ignore":
             kind, query, fresh = ("web" if is_info_question(text) else "chat"), text, True
         else:
             kind, query, fresh = decision.kind, decision.query or text, decision.fresh
+        self.last_undo, self.last_route = None, (norm, "answer")
         if kind == "web":
-            log.info("Маршрут: облако (%s)", query)
+            log.info("Маршрут: облако (%s)", private(query))
             return self._answer_web(text, query, fresh)
         log.info("Маршрут: локальная модель")
         history = self.app.dialog.messages()
@@ -237,15 +314,21 @@ class Brain:
         return Reply(stream=self._record(text, self._local_agent(history, text)))
 
     # ------------------------------------------------------------------ commands
-    async def _run_commands(self, text: str, hits: list[tuple[Skill, Intent]]) -> Reply:
+    async def _run_commands(self, text: str, hits: list[tuple[Skill, Intent]], source: str = "skill") -> Reply:
         replies: list[Reply] = []
+        meta = all(skill.name == "system" and intent.action in _META for skill, intent in hits)
         for skill, intent in hits:
-            log.info("Модуль %s.%s %s", skill.name, intent.action, intent.slots or "")
+            log.info("Модуль %s.%s %s", skill.name, intent.action, private(intent.slots or ""))
             reply = await skill.handle(intent)
             self._remember_confirm(reply)
             replies.append(reply)
-            if not (skill.name == "system" and intent.action in ("again", "repeat", "stop")):
+            if not (skill.name == "system" and intent.action in _META):
                 self.last_command = (skill, intent)
+        if not meta:
+            undos = [r.undo for r in replies if r.undo is not None]
+            self.last_undo = _chain_undo(undos) if undos else None
+            self.last_route = (normalize_command(text), source)
+            self.last_answer_key = ""
         self.app.dialog.add("user", text, action=True)
         said = " ".join(r.speech for r in replies if r.speech)
         if said:
@@ -280,6 +363,7 @@ class Brain:
         cached = self.router.cached_answer(key)
         history = self.app.dialog.messages()
         self.app.dialog.add("user", text)
+        self.last_answer_key = key
         if cached:
             log.info("Ответ из кэша (облако не тратится)")
             self.app.llm.last_provider = "кэш"
@@ -340,7 +424,7 @@ class Brain:
                         args = json.loads(args)
                     except ValueError:
                         args = {}
-                log.info("Инструмент %s %s", name, args)
+                log.info("Инструмент %s %s", name, private(args))
                 if name == ASK_INTERNET.name:
                     q = str(args.get("question") or text)
                     ask = [self._system(INFO_ADDON), Msg("user", q)]

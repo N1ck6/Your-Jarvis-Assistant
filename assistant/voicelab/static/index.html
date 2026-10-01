@@ -145,8 +145,11 @@ function widget(f) {
       return el;
     }
     case "ollama": {
-      const el = selectEl([[v, v]], v, val => save(f.key, val));
-      loadOllama().then(d => fillSelect(el, d.models.map(m => [m, m]).concat(d.models.includes(v) ? [] : [[v, v + " (не скачана)"]]), v));
+      const optional = f.key === "router.model";
+      const none = optional ? [["", "Как основная модель"]] : [];
+      const el = selectEl([[v ?? "", v || "Как основная модель"]], v ?? "", val => save(f.key, val));
+      loadOllama().then(d => fillSelect(el, none.concat(d.models.map(m => [m, m]),
+        !v || d.models.includes(v) ? [] : [[v, v + " (не скачана)"]]), v ?? ""));
       return el;
     }
     case "folder": {

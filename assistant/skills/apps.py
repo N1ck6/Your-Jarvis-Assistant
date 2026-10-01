@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 import webbrowser
 from pathlib import Path
 
@@ -40,9 +41,14 @@ class AppsSkill(Skill):
 
     def __init__(self) -> None:
         self.index: dict[str, str] = {}   # lowercase name -> launch target
+        self._built = 0.0
 
     async def start(self) -> None:
+        await self.refresh()
+
+    async def refresh(self) -> None:
         self.index = await run_blocking(self._build_index)
+        self._built = time.monotonic()
         log.info("Приложений в индексе: %d", len(self.index))
 
     @staticmethod
@@ -110,6 +116,10 @@ class AppsSkill(Skill):
         if not name:
             return Reply("Что открыть?")
         found = self.resolve(name)
+        if not found and time.monotonic() - self._built > 60:
+            # Installed after Jarvis started? The Start menu is read again (once a minute at most).
+            await self.refresh()
+            found = self.resolve(name)
         if not found:
             return Reply(f"Не нашёл «{name}» среди приложений.", tool_result=f"Приложение {name} не найдено",
                          fallthrough=True)
@@ -120,7 +130,20 @@ class AppsSkill(Skill):
             log.warning("Не удалось открыть %s: %s", target, exc)
             return Reply(f"Не получилось открыть {title}.")
         log.info("Открываю %s -> %s", title, target)
-        return Reply(f"Открываю {title}.", reaction="ok", tool_result=f"открыто {title}", listen_after=False)
+
+        async def close_again() -> Reply:
+            windows = next((s for s in self.app.skills if s.name == "windows"), None)
+            found = await run_blocking(windows.find, title) if windows else []
+            if not found:
+                return Reply(f"Не вижу окна {title}, закрыть нечего.")
+            from assistant import winutil
+
+            for w in found:
+                await run_blocking(winutil.close_window, w)
+            return Reply(f"Закрыл {title}.")
+
+        return Reply(f"Открываю {title}.", reaction="ok", tool_result=f"открыто {title}", listen_after=False,
+                     undo=close_again)
 
 
 def _launch(target: str) -> None:

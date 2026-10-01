@@ -19,6 +19,14 @@ OFFLINE_NOTE = ("Доступа к интернету сейчас нет. Не 
                 "что сейчас не можешь это проверить. Общеизвестные факты и определения объясняй как обычно.")
 
 
+def cooldown_for(exc: QuotaError, default: float) -> float:
+    """Minute limits pass in seconds (Groq: 8k tokens a minute, one search is ~4k): wait exactly that long.
+    A daily quota or an unknown wait gets the long default pause."""
+    if exc.retry_after is not None and (not exc.daily or exc.retry_after >= 60):
+        return max(2.0, min(exc.retry_after + 1.0, 6 * 3600))
+    return default
+
+
 class LlmHub:
     def __init__(self, cfg: LlmCfg) -> None:
         self.cfg = cfg
@@ -63,7 +71,8 @@ class LlmHub:
             started = False
             provider.last_usage = (0, 0)
             msgs = messages
-            if web and provider is self.local:
+            if web and not provider.can_search():
+                # Without search the model would invent today's rates and scores from its training data.
                 msgs = [Msg("system", OFFLINE_NOTE), *messages]
             try:
                 async for delta in provider.stream(msgs, web=web, max_tokens=max_tokens):
@@ -80,8 +89,9 @@ class LlmHub:
                 self._cooldown_until[provider.name] = time.monotonic() + AUTH_COOLDOWN_SEC
                 log.error("%s отключён на час: %s", provider.name, exc)
             except QuotaError as exc:
-                self._cooldown_until[provider.name] = time.monotonic() + self.cfg.cooldown_sec
-                log.warning("%s: лимит исчерпан, пауза %d с (%s)", provider.name, self.cfg.cooldown_sec, str(exc)[:120])
+                pause = cooldown_for(exc, self.cfg.cooldown_sec)
+                self._cooldown_until[provider.name] = time.monotonic() + pause
+                log.warning("%s: лимит%s, пауза %d с", provider.name, " на день" if exc.daily else "", pause)
             except ProviderError as exc:
                 log.warning("%s недоступен: %s", provider.name, str(exc)[:200])
             except Exception:

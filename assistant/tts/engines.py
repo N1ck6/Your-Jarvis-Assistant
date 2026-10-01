@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 
 import numpy as np
 
@@ -78,11 +80,37 @@ class SileroEngine(TtsEngine):
         return AudioClip(audio.numpy().astype(np.float32), self.SR)
 
 
+class _Stubs:
+    """F5-TTS's inference module imports its trainer (wandb, datasets), an ASR pipeline (transformers, sklearn),
+    plotting and pydub at the top: ~8 s and hundreds of MB that synthesis never uses. They are replaced by empty
+    modules for the duration of the import only."""
+
+    NAMES = {"f5_tts.model.trainer": {"Trainer": object}, "transformers": {"pipeline": None},
+             "matplotlib": {"use": lambda *a, **k: None}, "matplotlib.pylab": {},
+             "pydub": {"AudioSegment": None, "silence": None}}
+
+    def __enter__(self) -> None:
+        import types
+
+        self.added = [n for n in self.NAMES if n not in sys.modules]
+        for name in self.added:
+            module = types.ModuleType(name)
+            module.__dict__.update(self.NAMES[name])
+            sys.modules[name] = module
+        if "matplotlib" in self.added:
+            sys.modules["matplotlib"].pylab = sys.modules["matplotlib.pylab"]  # type: ignore[attr-defined]
+
+    def __exit__(self, *_exc) -> None:
+        for name in self.added:
+            sys.modules.pop(name, None)  # a real import elsewhere later gets the real module
+
+
 class CloneEngine(TtsEngine):
     """Jarvis's own voice: ESpeech-TTS-1 (F5-TTS trained on Russian, Apache-2.0) cloning a recorded pack.
 
-    Voice id = pack id ("jarvis-og"). Needs an NVIDIA GPU: ~0.3 s of synthesis per second of speech,
-    plus ~1 s per sentence for the reference. Stress marks come from RUAccent.
+    Voice id = pack id ("jarvis-remaster"). Needs an NVIDIA GPU: ~0.3 s of synthesis per second of speech,
+    plus ~0.7 s per sentence for the reference. Stress marks come from Silero Stress (MIT, ~250 MB of RAM;
+    RUAccent needed 2.7 GB). Short frequent phrases are kept synthesized in memory.
     """
 
     name = "clone"
@@ -91,12 +119,16 @@ class CloneEngine(TtsEngine):
     SR = 24000
     nfe_step = 16  # set from [tts] clone_nfe: fewer steps = faster, more = cleaner
 
+    CACHE_SIZE = 96          # short phrases ("Сейчас покажу.", "Готово.") are not synthesized twice
+    CACHE_MAX_CHARS = 80
+
     def __init__(self) -> None:
         super().__init__()
         self._model = None
         self._vocoder = None
         self._accent = None
         self._refs: dict[str, tuple] = {}
+        self._cache: OrderedDict[tuple, AudioClip] = OrderedDict()
 
     def load(self, voice: str) -> None:
         if self._model is None:
@@ -104,18 +136,18 @@ class CloneEngine(TtsEngine):
 
             if not torch.cuda.is_available():
                 raise RuntimeError("для голоса Джарвиса нужна видеокарта NVIDIA и PyTorch с CUDA")
-            from f5_tts.infer.utils_infer import load_model, load_vocoder
-            from f5_tts.model import DiT
-            from huggingface_hub import hf_hub_download
-            from ruaccent import RUAccent
-
             t = time.perf_counter()
+            with _Stubs():
+                from f5_tts.infer.utils_infer import load_model, load_vocoder
+                from f5_tts.model.backbones.dit import DiT
+            from huggingface_hub import hf_hub_download
+            from silero_stress import load_accentor
+
             cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
             self._model = load_model(DiT, cfg, hf_hub_download(self.REPO, self.CKPT),
                                      vocab_file=hf_hub_download(self.REPO, "vocab.txt"), device="cuda")
             self._vocoder = load_vocoder(device="cuda")
-            self._accent = RUAccent()
-            self._accent.load(omograph_model_size="turbo3.1", use_dictionary=True)
+            self._accent = load_accentor()
             log.info("Клон-голос загружен за %.1f с", time.perf_counter() - t)
         if voice not in self._refs:
             import torch
@@ -123,15 +155,38 @@ class CloneEngine(TtsEngine):
             from assistant.voicepack import clone_reference
 
             audio, text = clone_reference(voice, self.SR)
-            self._refs[voice] = ((torch.from_numpy(audio).unsqueeze(0), self.SR),
-                                 self._accent.process_all(text) + " ")
+            self._refs[voice] = ((torch.from_numpy(audio).unsqueeze(0), self.SR), self._accent(text) + " ")
+            self._synth(self._stress("Готово."), voice, 1.0)  # the first run compiles CUDA kernels: not on the user
+
+    def synth(self, text: str, voice: str, rate: float = 1.0) -> AudioClip:
+        key = (voice, round(rate, 2), self.nfe_step, text)
+        if len(text) <= self.CACHE_MAX_CHARS and key in self._cache:
+            self._cache.move_to_end(key)
+            return self._cache[key]
+        clip = super().synth(text, voice, rate)
+        if len(text) <= self.CACHE_MAX_CHARS and clip.samples.size:
+            self._cache[key] = clip
+            while len(self._cache) > self.CACHE_SIZE:
+                self._cache.popitem(last=False)
+        return clip
+
+    def _stress(self, text: str) -> str:
+        """Stress marks for the model; English words already carry theirs from the CMU dictionary
+        (the accentor would move them), so those words are kept as they are."""
+        if "+" not in text:
+            return self._accent(text)
+        words = text.split(" ")
+        out = self._accent(text.replace("+", "")).split(" ")
+        if len(out) != len(words):
+            return " ".join(out)
+        return " ".join(w if "+" in w else o for w, o in zip(words, out))
 
     def _synth(self, text: str, voice: str, rate: float) -> AudioClip:
         import torch
         from f5_tts.infer.utils_infer import infer_batch_process
 
         ref, ref_text = self._refs[voice]
-        gen = self._accent.process_all(text)
+        gen = self._stress(text)
         with torch.inference_mode():
             wav, sr, _ = next(infer_batch_process(ref, ref_text, [gen], self._model, self._vocoder,
                                                   nfe_step=self.nfe_step, speed=rate, progress=None, device="cuda"))

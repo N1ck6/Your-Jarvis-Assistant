@@ -69,7 +69,14 @@ class FocusSkill(Skill):
         if self.running:
             self._task.cancel()
         self._task = asyncio.create_task(self._run(work))
-        return Reply(f"Помодоро: {work} минут работы, потом {cfg.break_min} минут отдыха. Не отвлекаю.", listen_after=False)
+
+        async def undo() -> Reply:
+            if self.running:
+                self._task.cancel()
+            return Reply("Помодоро остановлен.")
+
+        return Reply(f"Помодоро: {work} минут работы, потом {cfg.break_min} минут отдыха. Не отвлекаю.",
+                     listen_after=False, undo=undo)
 
     async def _phase_wait(self, name: str, minutes: int) -> None:
         self._phase = name

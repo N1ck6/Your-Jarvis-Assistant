@@ -1,7 +1,9 @@
 """Explanation window: text cards on screen, the voice explains them in other words.
 
 The model streams cards in a simple line format so the first card is shown and
-spoken after ~100 tokens instead of waiting for the whole deck.
+spoken after ~150 tokens instead of waiting for the whole deck. Cards are meant to be useful
+on their own (a cheat sheet: definitions, steps, numbers, examples); the voice adds an analogy.
+Paging by hand speaks the chosen card; closing the window (Esc, ✕) stops the narration.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ from typing import AsyncIterator
 
 from assistant.core import Card, Deck
 from assistant.llm.providers import Msg
+from assistant.log import private
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
 log = logging.getLogger("explain")
@@ -25,22 +28,40 @@ _TRIGGERS = [
     re.compile(r"^(?:разбери|разберем|разобрать)\s+(?:тему|по полочкам)\s+(?P<topic>.+)$"),
 ]
 
-PROMPT = """Ты готовишь короткое наглядное объяснение для окна на экране. Пользователь читает текст на карточке,
-а голос одновременно поясняет его ПРОСТЫМИ словами. Голос не зачитывает карточку, а дополняет: аналогия, пример, зачем это нужно.
+PROMPT = """Ты готовишь наглядное объяснение для окна с карточками. Пользователь ЧИТАЕТ карточку, а голос в это время
+коротко поясняет её простыми словами: аналогия, пример из жизни, зачем это нужно. Голос не зачитывает карточку.
 
-Формат ответа строго такой, без markdown кроме «- » в начале строк:
+Карточки должны быть полезны сами по себе, как хорошая шпаргалка: определения, конкретные факты, числа, шаги,
+названия, примеры, команды или формулы. Никакой воды и общих фраз вроде «это важная тема».
+
+Формат строго такой, без markdown:
 ЗАГОЛОВОК: <тема, 2–6 слов>
 ###
-КАРТОЧКА: <заголовок карточки>
+КАРТОЧКА: <заголовок карточки, 2–5 слов>
 ЭКРАН:
-- <тезис, до 8 слов>
-- <тезис, до 8 слов>
-ГОЛОС: <1–2 коротких разговорных предложения, до 30 слов>
+- <законченная мысль с конкретикой, 6–20 слов>
+- <Термин — короткое пояснение>
+1. <шаг процесса; для последовательностей нумеруй строки вместо «-»>
+> <одна строка кода, команды, формулы или примера запроса — только если правда помогает>
+ГОЛОС: <1–2 разговорных предложения, до 35 слов>
 ###
 КАРТОЧКА: ...
 
-Сделай от 3 до {max_cards} карточек: сначала суть, потом как работает, потом пример, в конце вывод.
-Пиши по-русски. Числа можно цифрами. Тема: {topic}"""
+Пример хорошей карточки (на другую тему):
+КАРТОЧКА: Как работает DNS
+ЭКРАН:
+1. Браузер спрашивает у резолвера провайдера IP-адрес для example.com
+2. Резолвер идёт к корневому серверу, затем к серверу зоны .com
+3. Авторитетный сервер домена отвечает: 93.184.216.34
+4. Ответ кэшируется на время TTL, например 3600 секунд
+> nslookup example.com
+ГОЛОС: Это как справочная: вы называете имя, вам диктуют номер, и вы его записываете, чтобы не звонить снова.
+
+Сделай от 4 до {max_cards} карточек: 1) суть и точное определение; 2) как устроено или работает, по шагам;
+3) конкретный пример с числами, кодом или реальной ситуацией; 4) где применяют, плюсы и минусы или частые ошибки;
+последняя карточка — итог из 3 главных тезисов. На каждой карточке 3–5 строк ЭКРАН, и каждая строка сообщает
+новый конкретный факт: название, число, команду, шаг или пример, а не пересказ заголовка.
+Пиши по-русски; общепринятые английские термины — латиницей (REST API, HTTP, GPU). Тема: {topic}"""
 
 _CARD_SPLIT = re.compile(r"^###\s*$", re.M)
 
@@ -66,12 +87,26 @@ def parse_deck(text: str, final: bool) -> Deck:
     return deck
 
 
+class Narration:
+    """A deck being explained: which card to speak next, user paging and closing."""
+
+    def __init__(self) -> None:
+        self.deck: Deck | None = None
+        self.jump: int | None = None
+        self.closed = False
+        self.more = asyncio.Event()   # a new card arrived or the user did something
+
+
 class ExplainSkill(Skill):
     name = "explain"
     title = "Объяснение в окне"
     examples = [
         'объясни подробно <тема> (окно с карточками)',
     ]
+
+    def __init__(self) -> None:
+        self.narration: Narration | None = None
+        self.last_deck: Deck | None = None
 
     def match(self, text: str) -> Intent | None:
         for pattern in _TRIGGERS:
@@ -87,12 +122,35 @@ class ExplainSkill(Skill):
                      {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]},
                      "explain", exclusive=True)]
 
+    # ------------------------------------------------------------------ window events (from the UI)
+    def user_paged(self, index: int) -> None:
+        """The user flipped to card `index` by hand: speak that card (now or as the next one)."""
+        n = self.narration
+        if n is not None and not n.closed:
+            n.jump = index
+            n.more.set()
+            self.app.speaker.stop()   # the narration loop continues from the chosen card
+            return
+        deck = self.last_deck
+        if deck and 0 <= index < len(deck.cards) and deck.cards[index].speech:
+            self.app.speaker.stop()
+            asyncio.create_task(self.app.speaker.say(deck.cards[index].speech))
+
+    def user_closed(self) -> None:
+        n = self.narration
+        if n is not None:
+            n.closed = True
+            n.more.set()
+        self.app.speaker.stop()
+
+    # ------------------------------------------------------------------ generation
     async def _generate(self, topic: str) -> AsyncIterator[str]:
         cfg = self.app.cfg.explain
-        messages = [Msg("user", PROMPT.format(topic=topic, max_cards=cfg.max_cards))]
+        messages = [Msg("user", PROMPT.format(topic=topic, max_cards=max(4, cfg.max_cards)))]
         hub = self.app.llm
-        chain = self.app.cfg.llm.info_chain if cfg.provider == "cloud" else ["local"]
-        async for delta in hub.stream(chain, messages, web=cfg.provider == "cloud", max_tokens=900):
+        # Cloud: Groq/Gemini without web search (~2.5k tokens a deck); local: free, ~25 s for a deck.
+        chain = [p for p in self.app.cfg.llm.info_chain if p != "local"] + ["local"] if cfg.provider == "cloud" else ["local"]
+        async for delta in hub.stream(chain, messages, web=False, max_tokens=1800):
             yield delta
 
     async def handle(self, intent: Intent) -> Reply:
@@ -102,59 +160,66 @@ class ExplainSkill(Skill):
         if not topic:
             return Reply("Что объяснить?")
         app = self.app
-        log.info("Объяснение: %s", topic)
-
-        cards_q: asyncio.Queue[Card | None] = asyncio.Queue()
-        deck_box: dict[str, Deck] = {}
+        log.info("Объяснение: %s", private(topic))
+        narration = Narration()
+        self.narration = narration
+        produced = asyncio.Event()
 
         async def produce() -> None:
             text = ""
-            sent = 0
             try:
                 async for delta in self._generate(topic):
                     text += delta
                     deck = parse_deck(text, final=False)
-                    if deck.title and "deck" not in deck_box:
-                        deck_box["deck"] = deck
+                    if deck.title and narration.deck is None:
+                        narration.deck = deck
                         app.ui.show_deck(deck)
-                    for card in deck.cards[sent:]:
-                        await cards_q.put(card)
-                    sent = len(deck.cards)
+                    if narration.deck is not None and len(deck.cards) > len(narration.deck.cards):
+                        narration.deck.cards = deck.cards
+                        app.ui.update_deck(narration.deck)
+                        narration.more.set()
                 deck = parse_deck(text, final=True)
                 if not deck.title:
                     deck.title = topic[:1].upper() + topic[1:]
-                if "deck" not in deck_box:
-                    deck_box["deck"] = deck
+                if narration.deck is None:
                     app.ui.show_deck(deck)
-                for card in deck.cards[sent:]:
-                    await cards_q.put(card)
-                deck_box["deck"] = deck
+                narration.deck = deck
                 app.ui.update_deck(deck)
                 if not deck.cards:
-                    log.warning("Модель не вернула карточек:\n%s", text[:500])
+                    log.warning("Модель не вернула карточек:\n%s", private(text[:500]))
             finally:
-                await cards_q.put(None)
+                produced.set()
+                narration.more.set()
 
         producer = asyncio.create_task(produce())
         spoken_any = False
         try:
             await app.speaker.say("Сейчас покажу.")
             index = 0
-            while True:
-                card = await cards_q.get()
-                if card is None:
+            while not narration.closed:
+                cards = narration.deck.cards if narration.deck else []
+                if index < len(cards):
+                    narration.jump = None
+                    app.ui.show_card(index)
+                    await app.speaker.say(cards[index].speech)
+                    spoken_any = True
+                    if narration.closed:
+                        break
+                    index = narration.jump if narration.jump is not None else index + 1
+                    continue
+                if produced.is_set():
                     break
-                deck = deck_box.get("deck")
-                if deck is not None and index >= len(deck.cards):
-                    deck.cards.append(card)
-                    app.ui.update_deck(deck)
-                app.ui.show_card(index)
-                await app.speaker.say(card.speech)
-                spoken_any = True
-                index += 1
+                narration.more.clear()
+                await narration.more.wait()
+                if narration.jump is not None:
+                    index = narration.jump
         finally:
             if not producer.done():
                 producer.cancel()
+            self.narration = None
+            self.last_deck = narration.deck
+        if narration.closed:
+            return Reply(spoken=True, listen_after=False)
         if not spoken_any:
             return Reply("Не получилось подготовить объяснение.")
         app.dialog.add("assistant", f"[показал объяснение: {topic}]")

@@ -170,6 +170,19 @@ CASES = [
     # --- voice
     ("смени голос", "voice", "lab"), ("открой настройки голоса", "voice", "lab"), ("говори быстрее", "voice", "rate"),
     ("ты говоришь слишком быстро", "voice", "rate"),
+    # --- Jarvis's own loudness and one app in the mixer (not the system volume)
+    ("говори тише", "media", "speech_volume"), ("говори погромче", "media", "speech_volume"),
+    ("ты слишком громко говоришь", "media", "speech_volume"), ("тебя плохо слышно", "media", "speech_volume"),
+    ("сделай свой голос тише", "media", "speech_volume"),
+    ("сделай дискорд тише", "media", "app_volume"), ("браузер погромче", "media", "app_volume"),
+    ("убавь звук в стиме", "media", "app_volume"), ("выключи звук в дискорде", "media", "app_mute"),
+    ("включи звук в браузере", "media", "app_mute"), ("заглуши телеграм", "media", "app_mute"),
+    ("сделай немного тише", "media", "vol_down"), ("сделай звук громче", "media", "vol_up"), ("еще тише", "media", "vol_down"),
+    # --- "не то" / "верни как было"
+    ("не то", "system", "wrong"), ("нет, не то", "system", "wrong"), ("я не это имел в виду", "system", "wrong"),
+    ("ты не так понял", "system", "wrong"), ("неправильно", "system", "wrong"), ("ты ошибся", "system", "wrong"),
+    ("верни как было", "system", "undo"), ("отмени это", "system", "undo"), ("отмени последнее действие", "system", "undo"),
+    ("верни обратно", "system", "undo"), ("откати", "system", "undo"),
     # --- user scenarios (config/scenarios.example.toml)
     ("режим фокуса", "scenarios", "run"), ("включи фокус", "scenarios", "run"), ("хочу поработать", "scenarios", "run"),
     ("игровой режим", "scenarios", "run"),
@@ -196,9 +209,9 @@ def test_timer_label(app):
 
 def test_weather_city_and_day(app):
     hit = app.brain.match_skill("какая погода будет завтра в нижнем новгороде")
-    assert hit[1].slots == {"city": "нижнем новгороде", "day": 1}
+    assert hit[1].slots == {"city": "нижнем новгороде", "day": 1, "part": ""}
     hit = app.brain.match_skill("погода в казани послезавтра")
-    assert hit[1].slots == {"city": "казани", "day": 2}
+    assert hit[1].slots == {"city": "казани", "day": 2, "part": ""}
 
 
 def test_search_query_and_engine(app):
@@ -322,7 +335,7 @@ def test_weather_followups(app, follow, slots):
     weather = next(s for s in app.skills if s.name == "weather")
     last = app.brain.match_skill("какая погода в казани")[1]
     intent = weather.followup(normalize_command(follow), last)
-    assert intent is not None and intent.slots == slots
+    assert intent is not None and {k: v for k, v in intent.slots.items() if k != "part"} == slots
 
 
 def test_weather_followup_ignores_other_phrases(app):
@@ -332,3 +345,51 @@ def test_weather_followup_ignores_other_phrases(app):
     last = app.brain.match_skill("какая погода в казани")[1]
     for phrase in ("а сколько ему лет", "открой телеграм", "спасибо"):
         assert weather.followup(normalize_command(phrase), last) is None
+
+
+@pytest.mark.parametrize("phrase,skill,action", [
+    ("сколько будет 15% от 2300", "calc", "calc"), ("посчитай 128 умножить на 7", "calc", "calc"),
+    ("корень из 144", "calc", "calc"), ("сколько дней до нового года", "calc", "days_to"),
+    ("какой день будет через 100 дней", "calc", "in_days"), ("100 миль в километрах", "calc", "convert"),
+    ("заблокируй компьютер", "power", "lock"), ("спящий режим", "power", "sleep"),
+    ("выключи компьютер через час", "power", "off"), ("перезагрузи компьютер", "power", "reboot"),
+    ("отмени выключение", "power", "cancel"),
+    ("скопируй текст с экрана", "screen", "ocr"), ("распознай текст на экране", "screen", "ocr"),
+    ("новости", "news", "news"), ("что нового в Москве", "news", "news"), ("новости технологий", "news", "news"),
+    ("запомни мой голос", "voiceprint", "enroll"), ("забудь мой голос", "voiceprint", "forget"),
+    ("ты узнаешь мой голос", "voiceprint", "check"),
+    # the old meanings stay
+    ("который час", "system", "time"), ("какое сегодня число", "system", "date"), ("сколько осталось", "timers", "list"),
+    ("выключи компьютерную игру", "windows", "close"), ("закрой телеграм", "windows", "close"),
+])
+def test_new_modules(app, phrase, skill, action):
+    assert route(app, phrase) == (skill, action), phrase
+
+
+def test_calc_answers(app):
+    calc = next(s for s in app.skills if s.name == "calc")
+
+    def say(phrase):
+        return asyncio.run(calc.handle(calc.match(phrase))).speech
+
+    assert say("сколько будет 15% от 2300") == "345."
+    assert say("сколько будет 7 разделить на 3") == "2,33."
+    assert say("30 градусов цельсия в фаренгейтах") == "86 градусов Фаренгейта."
+    assert say("10 фунтов в килограммы") == "4,54 килограмма."
+    assert calc.match("какой курс доллара") is None and calc.match("сколько стоит биткоин") is None
+
+
+def test_mood_playlists(app, tmp_path):
+    music = next(s for s in app.skills if s.name == "music")
+    for name in ("Calm", "Sad", "Phonk"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "track.mp3").write_bytes(b"")
+    old = app.cfg.music.dir
+    app.cfg.music.dir = str(tmp_path)
+    try:
+        assert music.playlist("спокойную").name == "Calm"
+        assert music.playlist("что-нибудь грустное").name == "Sad"
+        assert music.playlist("фонк").name == "Phonk"
+        assert music.playlist("телеграм") is None
+    finally:
+        app.cfg.music.dir = old

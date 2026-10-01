@@ -12,6 +12,43 @@ import sounddevice as sd
 log = logging.getLogger("player")
 
 
+class _StreamGate:
+    """Many streams may be open at once; re-reading the device list needs none of them open."""
+
+    def __init__(self) -> None:
+        self._cond = threading.Condition()
+        self._open = 0
+        self._reinit = False
+
+    def __enter__(self) -> None:
+        with self._cond:
+            while self._reinit:
+                self._cond.wait()
+            self._open += 1
+
+    def __exit__(self, *_exc) -> None:
+        with self._cond:
+            self._open -= 1
+            self._cond.notify_all()
+
+    def reinit(self, timeout: float = 15.0) -> bool:
+        """Makes PortAudio see new devices (headphones, a new default). Waits for open streams to close."""
+        with self._cond:
+            self._reinit = True
+            try:
+                if not self._cond.wait_for(lambda: self._open == 0, timeout):
+                    return False
+                sd._terminate()
+                sd._initialize()
+                return True
+            finally:
+                self._reinit = False
+                self._cond.notify_all()
+
+
+GATE = _StreamGate()
+
+
 @dataclass
 class AudioClip:
     samples: np.ndarray  # float32 mono, -1..1
@@ -39,6 +76,7 @@ def resolve_device(spec: str, kind: str) -> int | None:
 
 class Player:
     def __init__(self, device: str = "", volume: float = 1.0, on_level: Callable[[float], None] | None = None) -> None:
+        self.device_spec = device
         self.device = resolve_device(device, "output")
         self.volume = volume
         self.on_level = on_level
@@ -47,6 +85,10 @@ class Player:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def refresh_device(self) -> None:
+        """After PortAudio re-read the devices, indexes may have moved: resolve the configured one again."""
+        self.device = resolve_device(self.device_spec, "output")
 
     def play(self, clip: AudioClip) -> bool:
         """Blocks until the clip ends. Returns False if interrupted."""
@@ -82,8 +124,8 @@ class Player:
                 raise sd.CallbackStop
 
         try:
-            with sd.OutputStream(samplerate=clip.sr, channels=1, dtype="float32", device=self.device,
-                                 callback=callback, finished_callback=done.set):
+            with GATE, sd.OutputStream(samplerate=clip.sr, channels=1, dtype="float32", device=self.device,
+                                       callback=callback, finished_callback=done.set):
                 while not done.wait(0.05):
                     if stop.is_set():
                         break

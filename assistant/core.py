@@ -53,6 +53,9 @@ class UiPort(Protocol):
     def show_card(self, index: int) -> None: ...
     def close_deck(self) -> None: ...
     def open_url(self, url: str) -> None: ...
+    def chat_add(self, role: str, text: str) -> None:
+        """A line for the chat window history: role "user" or "assistant"."""
+        ...
     def select_region(self) -> "concurrent.futures.Future[bytes | None]":
         """Freeze-frame of the screen, the user drags a rectangle; resolves to PNG bytes or None."""
         ...
@@ -62,13 +65,19 @@ class ConsoleUi:
     """Headless UI used with --no-ui and in tests."""
 
     def set_state(self, state: State, detail: str = "") -> None:
-        log.info("[%s] %s", STATE_LABELS.get(state, state.value), detail)
+        from assistant.log import private
+
+        log.info("[%s] %s", STATE_LABELS.get(state, state.value), private(detail))
 
     def notify(self, title: str, text: str) -> None:
-        log.info("УВЕДОМЛЕНИЕ %s: %s", title, text)
+        from assistant.log import private
+
+        log.info("УВЕДОМЛЕНИЕ %s: %s", title, private(text))
 
     def show_deck(self, deck: Deck) -> None:
-        log.info("ОКНО «%s»", deck.title)
+        from assistant.log import private
+
+        log.info("ОКНО «%s»", private(deck.title))
 
     def update_deck(self, deck: Deck) -> None:
         pass
@@ -83,6 +92,9 @@ class ConsoleUi:
         import webbrowser
 
         webbrowser.open(url)
+
+    def chat_add(self, role: str, text: str) -> None:
+        pass
 
     def select_region(self) -> "concurrent.futures.Future[bytes | None]":
         fut: concurrent.futures.Future[bytes | None] = concurrent.futures.Future()

@@ -9,6 +9,7 @@ import re
 from rapidfuzz import fuzz
 
 from assistant.core import Card, Deck
+from assistant.log import private
 from assistant.paths import DATA_DIR
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
@@ -71,11 +72,19 @@ class MemorySkill(Skill):
             fact = raw[:1].lower() + raw[1:]
             if any(fuzz.ratio(fact.lower(), f["text"].lower()) >= 90 for f in self._facts):
                 return Reply("Это я уже знаю.", listen_after=False)
-            self._facts.append({"text": fact, "added": dt.date.today().isoformat()})
+            item = {"text": fact, "added": dt.date.today().isoformat()}
+            self._facts.append(item)
             self._save()
-            log.info("Запомнил: %s", fact)
+            log.info("Запомнил: %s", private(fact))
+
+            async def undo() -> Reply:
+                if item in self._facts:
+                    self._facts.remove(item)
+                    self._save()
+                return Reply("Забыл.")
+
             return Reply(f"Запомнил, {self.app.cfg.assistant.address}.", reaction="ok", tool_result="запомнено",
-                         listen_after=False)
+                         listen_after=False, undo=undo)
         if intent.action == "recall":
             facts = self.facts()
             if not facts:
@@ -91,7 +100,13 @@ class MemorySkill(Skill):
                 return Reply("Такого я не помню.")
             self._facts.remove(best)
             self._save()
-            return Reply(f"Забыл: {best['text']}.", listen_after=False)
+
+            async def restore() -> Reply:
+                self._facts.append(best)
+                self._save()
+                return Reply("Вспомнил обратно.")
+
+            return Reply(f"Забыл: {best['text']}.", listen_after=False, undo=restore)
         if intent.action == "forget_all":
             if not self._facts:
                 return Reply("Память и так пуста.")

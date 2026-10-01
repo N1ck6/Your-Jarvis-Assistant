@@ -5,15 +5,21 @@ Nothing here writes, moves or deletes files. Every path is checked against [file
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
+import threading
 import time
 import winreg
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote
 
 from rapidfuzz import fuzz, process
 
 from assistant.config import Settings
+
+log = logging.getLogger("files")
 
 _SHELL_KEYS = {
     "desktop": "Desktop", "documents": "Personal", "downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
@@ -89,6 +95,31 @@ def is_allowed(cfg: Settings, path: Path) -> bool:
     return any(path == r or r in path.parents for r in allowed_roots(cfg))
 
 
+_SUBDIRS: dict[str, tuple[float, dict[str, Path]]] = {}
+
+
+def _subfolders(cfg: Settings) -> dict[str, Path]:
+    """Allowed roots and their subfolders (depth <= 2) by lowercase name; read at most once a minute."""
+    key = "|".join(str(r) for r in allowed_roots(cfg))
+    cached = _SUBDIRS.get(key)
+    if cached and time.monotonic() - cached[0] < 60:
+        return cached[1]
+    names: dict[str, Path] = {}
+    for root in allowed_roots(cfg):
+        names.setdefault(root.name.lower(), root)
+        try:
+            for child in root.iterdir():
+                if child.is_dir() and child.name.lower() not in _SKIP_DIRS:
+                    names.setdefault(child.name.lower(), child)
+                    for grand in child.iterdir():
+                        if grand.is_dir():
+                            names.setdefault(grand.name.lower(), grand)
+        except OSError:
+            continue
+    _SUBDIRS[key] = (time.monotonic(), names)
+    return names
+
+
 def resolve_dir(cfg: Settings, spoken: str) -> Path | None:
     """'загрузках' -> Downloads, 'папке проекты' -> an allowed subfolder named like that."""
     spoken = spoken.strip().removeprefix("папке ").removeprefix("папка ").removeprefix("папку ").strip()
@@ -103,18 +134,7 @@ def resolve_dir(cfg: Settings, spoken: str) -> Path | None:
     if spoken.startswith("замет"):
         return cfg.resolve(cfg.notes.dir)
     # A subfolder (depth <= 2) of an allowed root, fuzzy by name.
-    names: dict[str, Path] = {}
-    for root in allowed_roots(cfg):
-        names.setdefault(root.name.lower(), root)
-        try:
-            for child in root.iterdir():
-                if child.is_dir() and child.name.lower() not in _SKIP_DIRS:
-                    names.setdefault(child.name.lower(), child)
-                    for grand in child.iterdir():
-                        if grand.is_dir():
-                            names.setdefault(grand.name.lower(), grand)
-        except OSError:
-            continue
+    names = _subfolders(cfg)
     hit = process.extractOne(spoken, names.keys(), scorer=fuzz.WRatio, score_cutoff=85)
     return names[hit[0]] if hit else None
 
@@ -146,8 +166,66 @@ class Found:
     mtime: float
 
 
+# ------------------------------------------------------------------ Windows Search index and a walk cache
+_index_lock = threading.Lock()
+_indexed: dict[Path, bool] = {}
+_TREE: dict[Path, tuple[float, float, list[Path]]] = {}   # root -> (built at, root mtime, files)
+TREE_TTL = 120.0
+
+
+def _query_index(sql: str) -> list[Path] | None:
+    """Rows of a Windows Search query as real paths (System.ItemUrl); None if the index is unavailable."""
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        conn = win32com.client.Dispatch("ADODB.Connection")
+        conn.Open("Provider=Search.CollatorDSO;Extended Properties='Application=Windows';")
+        rs, _ = conn.Execute(sql)
+        out: list[Path] = []
+        while not rs.EOF:
+            url = rs.Fields.Item("System.ItemUrl").Value or ""
+            if url.startswith("file:"):
+                out.append(Path(unquote(url[5:].lstrip("/") if url[5:7] != "//" else url[5:])))
+            rs.MoveNext()
+        conn.Close()
+        return out
+    except Exception as exc:
+        log.debug("Индекс Windows недоступен: %s", exc)
+        return None
+
+
+def _scope(root: Path) -> str:
+    return "SCOPE='file:" + str(root).replace("\\", "/").replace("'", "''") + "'"
+
+
+def is_indexed(root: Path) -> bool:
+    """Windows indexes the user folders by default; others (D:\\Проекты) are walked instead."""
+    with _index_lock:
+        if root not in _indexed:
+            rows = _query_index(f"SELECT TOP 1 System.ItemUrl FROM SystemIndex WHERE {_scope(root)}")
+            _indexed[root] = bool(rows)
+        return _indexed[root]
+
+
+def tree(root: Path) -> list[Path]:
+    """Files under root from a short-lived cache (re-walked after 2 min or when the folder itself changes)."""
+    try:
+        mtime = root.stat().st_mtime
+    except OSError:
+        return []
+    cached = _TREE.get(root)
+    if cached and time.monotonic() - cached[0] < TREE_TTL and cached[1] == mtime:
+        return cached[2]
+    files = list(walk(root))
+    _TREE[root] = (time.monotonic(), mtime, files)
+    return files
+
+
 def count(root: Path, exts: set[str] | None) -> int:
-    return sum(1 for p in walk(root) if exts is None or p.suffix.lower() in exts)
+    # Not through the index: it hands rows over one by one (16 s for 40k files vs 1.7 s for a walk).
+    return sum(1 for p in tree(root) if exts is None or p.suffix.lower() in exts)
 
 
 def folder_size(root: Path) -> tuple[int, int]:
@@ -175,16 +253,42 @@ def recent(root: Path, limit: int = 5) -> list[Found]:
     return sorted(items, key=lambda f: f.mtime, reverse=True)[:limit]
 
 
+def _candidates(roots: list[Path], query: str) -> list[Path]:
+    """Files whose name may fit: one Windows index query for the indexed folders, the cached walk for the rest."""
+    words = [w for w in re.findall(r"\w+", query) if len(w) >= 3][:4]
+    indexed = [r for r in roots if words and is_indexed(r)]
+    out: list[Path] = []
+    if indexed:
+        scopes = " OR ".join(_scope(r) for r in indexed)
+        like = " OR ".join("System.FileName LIKE '%" + w.replace("'", "''") + "%'" for w in words)
+        rows = _query_index(f"SELECT TOP 500 System.ItemUrl FROM SystemIndex WHERE ({scopes}) AND ({like})")
+        if rows is None:
+            indexed = []
+        else:
+            out += rows
+    for root in roots:
+        if root not in indexed:
+            out += tree(root)
+    return out
+
+
+def _name_score(query: str, stem: str) -> float:
+    if query in stem:
+        return 100
+    if len(query) < 4:
+        return 0
+    # partial_ratio of a long query against a tiny name ("vision" vs "n") would be 100.
+    return fuzz.partial_ratio(query, stem) if len(stem) >= len(query) else fuzz.ratio(query, stem)
+
+
 def find(cfg: Settings, name: str, limit: int = 5) -> list[Found]:
     """Fuzzy search by file name in all allowed folders."""
     query = name.lower().strip()
     scored: list[tuple[float, Path]] = []
-    for root in allowed_roots(cfg):
-        for p in walk(root, max_sec=3.0):
-            stem = p.stem.lower()
-            score = 100 if query in stem else fuzz.partial_ratio(query, stem) if len(query) >= 4 else 0
-            if score >= 85:
-                scored.append((score, p))
+    for p in dict.fromkeys(_candidates(allowed_roots(cfg), query)):
+        score = _name_score(query, p.stem.lower())
+        if score >= 85 and is_allowed(cfg, p):
+            scored.append((score, p))
     scored.sort(key=lambda x: (-x[0], len(x[1].name)))
     out = []
     for _, p in scored[:limit]:

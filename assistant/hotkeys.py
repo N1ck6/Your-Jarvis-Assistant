@@ -26,15 +26,20 @@ NAMED_VK = {"<space>": 0x20, "<enter>": 0x0D, "<esc>": 0x1B, "<tab>": 0x09, "<f1
             "<f11>": 0x7A, "<f12>": 0x7B}
 
 
+# The same physical keys in the Russian layout: "<ctrl>+<alt>+о" typed in the settings means Ctrl+Alt+J.
+_RU_KEYS = dict(zip("йцукенгшщзфывапролдячсмить", "qwertyuiopasdfghjklzxcvbnm"))
+
+
 def parse(combo: str) -> tuple[int, int]:
     """'<ctrl>+<alt>+j' -> (MOD_CONTROL | MOD_ALT, VK_J)."""
     mods, vk = 0, 0
     for part in combo.lower().replace(" ", "").split("+"):
+        part = _RU_KEYS.get(part, part)
         if part in MOD:
             mods |= MOD[part]
         elif part in NAMED_VK:
             vk = NAMED_VK[part]
-        elif len(part) == 1 and (part.isalnum()):
+        elif len(part) == 1 and part.isascii() and part.isalnum():
             vk = ord(part.upper())
         else:
             raise ValueError(f"не понимаю клавишу «{part}» в «{combo}»")

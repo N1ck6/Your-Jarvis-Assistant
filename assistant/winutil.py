@@ -56,6 +56,73 @@ def set_clipboard_text(text: str) -> bool:
         win32clipboard.CloseClipboard()
 
 
+# GDI handles, not memory blocks; Windows rebuilds them from the saved CF_DIB / CF_ENHMETAFILE bits.
+_HANDLE_FORMATS = {2, 3, 9, 14, 0x80, 0x82, 0x83, 0x8E}
+_kernel32 = ctypes.windll.kernel32
+_kernel32.GlobalSize.restype = ctypes.c_size_t
+_kernel32.GlobalSize.argtypes = [ctypes.c_void_p]
+_kernel32.GlobalLock.restype = ctypes.c_void_p
+_kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+_kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+_kernel32.GlobalAlloc.restype = ctypes.c_void_p
+_kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+_kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+user32.GetClipboardData.restype = ctypes.c_void_p
+user32.GetClipboardData.argtypes = [ctypes.c_uint]
+user32.SetClipboardData.restype = ctypes.c_void_p
+user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+user32.EnumClipboardFormats.argtypes = [ctypes.c_uint]
+user32.EnumClipboardFormats.restype = ctypes.c_uint
+_MAX_SAVED = 64 * 1024 * 1024
+
+
+def save_clipboard() -> list[tuple[int, bytes]] | None:
+    """Everything on the clipboard (text, pictures, copied files...) to put back after a Ctrl+C/Ctrl+V of ours."""
+    if not _open_clipboard():
+        return None
+    saved: list[tuple[int, bytes]] = []
+    total = 0
+    try:
+        fmt = 0
+        while fmt := user32.EnumClipboardFormats(fmt):
+            if fmt in _HANDLE_FORMATS:
+                continue
+            handle = user32.GetClipboardData(fmt)
+            size = _kernel32.GlobalSize(handle) if handle else 0
+            if not size or total + size > _MAX_SAVED:
+                continue
+            ptr = _kernel32.GlobalLock(handle)
+            if not ptr:
+                continue
+            try:
+                saved.append((fmt, ctypes.string_at(ptr, size)))
+                total += size
+            finally:
+                _kernel32.GlobalUnlock(handle)
+    finally:
+        win32clipboard.CloseClipboard()
+    return saved
+
+
+def restore_clipboard(saved: list[tuple[int, bytes]] | None) -> None:
+    if saved is None or not _open_clipboard():
+        return
+    try:
+        win32clipboard.EmptyClipboard()
+        for fmt, data in saved:
+            handle = _kernel32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+            ptr = _kernel32.GlobalLock(handle)
+            if not ptr:
+                _kernel32.GlobalFree(handle)
+                continue
+            ctypes.memmove(ptr, data, len(data))
+            _kernel32.GlobalUnlock(handle)
+            if not user32.SetClipboardData(fmt, handle):
+                _kernel32.GlobalFree(handle)  # the clipboard did not take ownership
+    finally:
+        win32clipboard.CloseClipboard()
+
+
 # ------------------------------------------------------------------ keyboard
 
 _VK = {"ctrl": win32con.VK_CONTROL, "alt": win32con.VK_MENU, "shift": win32con.VK_SHIFT, "win": win32con.VK_LWIN}
@@ -103,7 +170,7 @@ def press(vk: int, times: int = 1) -> None:
 def copy_selection(timeout: float = 0.6) -> str | None:
     """Ctrl+C in the foreground window; returns the copied text, restores the old clipboard."""
     release_modifiers()
-    old = get_clipboard_text()
+    old = save_clipboard()
     seq = clipboard_seq()
     hotkey("ctrl", "c")
     deadline = time.monotonic() + timeout
@@ -112,21 +179,19 @@ def copy_selection(timeout: float = 0.6) -> str | None:
     if clipboard_seq() == seq:
         return None
     text = get_clipboard_text()
-    if old is not None:
-        set_clipboard_text(old)
+    restore_clipboard(old)
     return text
 
 
 def paste_text(text: str) -> None:
     """Types text into the foreground window through the clipboard, then restores the clipboard."""
     release_modifiers()
-    old = get_clipboard_text()
+    old = save_clipboard()
     set_clipboard_text(text)
     time.sleep(0.03)
     hotkey("ctrl", "v")
     time.sleep(0.25)
-    if old is not None:
-        set_clipboard_text(old)
+    restore_clipboard(old)
 
 
 # ------------------------------------------------------------------ volume
@@ -165,6 +230,38 @@ def volume_percent() -> int | None:
         return round(_endpoint().GetMasterVolumeLevelScalar() * 100)
     except Exception:
         return None
+
+
+# ------------------------------------------------------------------ per-app volume (mixer sessions)
+
+
+def audio_apps() -> dict[str, list]:
+    """exe name -> its audio sessions in the Windows mixer ("discord.exe": [...])."""
+    from pycaw.pycaw import AudioUtilities
+
+    out: dict[str, list] = {}
+    try:
+        for s in AudioUtilities.GetAllSessions():
+            if s.Process is not None:
+                out.setdefault(s.Process.name().lower(), []).append(s)
+    except Exception as exc:
+        log.warning("Микшер недоступен: %s", exc)
+    return out
+
+
+def app_volume(exe: str, delta: float = 0.0, mute: bool | None = None) -> float | None:
+    """Changes the mixer volume of one app by `delta` (0..1 scale) or mutes it; returns the new level."""
+    level = None
+    for s in audio_apps().get(exe.lower(), []):
+        vol = s.SimpleAudioVolume
+        if mute is not None:
+            vol.SetMute(1 if mute else 0, None)
+        if delta:
+            level = min(1.0, max(0.0, vol.GetMasterVolume() + delta))
+            vol.SetMasterVolume(level, None)
+        else:
+            level = vol.GetMasterVolume()
+    return level
 
 
 # ------------------------------------------------------------------ windows / processes
@@ -253,6 +350,17 @@ def minimize(w: Window) -> None:
 
 def maximize(w: Window) -> None:
     win32gui.ShowWindow(w.hwnd, win32con.SW_MAXIMIZE)
+
+
+def restore(w: Window) -> None:
+    win32gui.ShowWindow(w.hwnd, win32con.SW_RESTORE)
+
+
+def process_path(pid: int) -> str:
+    try:
+        return psutil.Process(pid).exe()
+    except (psutil.Error, OSError):
+        return ""
 
 
 def activate(w: Window) -> None:

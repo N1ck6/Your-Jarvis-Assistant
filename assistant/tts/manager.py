@@ -33,6 +33,17 @@ class TtsManager:
                 self._engines[name] = ENGINES[name]()
             return self._engines[name]
 
+    def release(self, engine: str) -> None:
+        """Frees an engine's model (Silero after the clone is ready: ~450 MB); it reloads itself if needed again."""
+        with self._lock:
+            dropped = self._engines.pop(engine, None)
+        if dropped is not None:
+            import gc
+
+            del dropped
+            gc.collect()
+            log.info("Голос %s выгружен из памяти", engine)
+
     def set_voice(self, voice_id: str) -> VoiceSpec:
         spec = get_voice(voice_id)
         self.preload(spec)

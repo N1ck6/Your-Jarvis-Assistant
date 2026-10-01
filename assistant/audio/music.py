@@ -18,6 +18,30 @@ SR = 44100
 CHANNELS = 2
 
 
+def av_stream(path: Path):
+    """The miniaudio stream protocol (prime with next(), then send(frames) -> float32 array) on top of PyAV/FFmpeg."""
+    import av
+
+    container = av.open(str(path))
+    try:
+        resampler = av.AudioResampler(format="flt", layout="stereo", rate=SR)
+        buf = np.zeros(0, dtype=np.float32)
+        frames = yield array.array("f")
+        for decoded in container.decode(audio=0):
+            for out in resampler.resample(decoded):
+                buf = np.concatenate([buf, out.to_ndarray().reshape(-1)])
+                while len(buf) >= frames * CHANNELS:
+                    chunk, buf = buf[:frames * CHANNELS], buf[frames * CHANNELS:]
+                    frames = yield array.array("f", chunk.tobytes())
+        for out in resampler.resample(None):
+            buf = np.concatenate([buf, out.to_ndarray().reshape(-1)])
+        while len(buf):
+            chunk, buf = buf[:frames * CHANNELS], buf[frames * CHANNELS:]
+            frames = yield array.array("f", chunk.tobytes())
+    finally:
+        container.close()
+
+
 class MusicPlayer:
     def __init__(self, volume: float = 0.6, duck_volume: float = 0.2) -> None:
         self.volume = volume
@@ -82,6 +106,17 @@ class MusicPlayer:
     def duck(self, on: bool) -> None:
         self._ducked = on
 
+    def reopen(self) -> None:
+        """New default speakers (headphones plugged in): reopen the output, keep the track and position."""
+        with self._lock:
+            device, self._device = self._device, None
+        if device is None:
+            return
+        device.close()
+        if self.active:
+            self._ensure_device()
+            log.info("Музыка переключена на новое устройство")
+
     # ------------------------------------------------------------------ internals
     def _open(self, index: int) -> None:
         self.index = index
@@ -92,8 +127,14 @@ class MusicPlayer:
             next(self._stream)  # prime the generator
             log.info("Играет: %s", path.stem)
         except (miniaudio.DecodeError, OSError) as exc:
-            log.warning("Не могу проиграть %s: %s", path.name, exc)
-            self._stream = None
+            # Downloads are often AAC/MP4 named .mp3; miniaudio reads only mp3/flac/wav/ogg.
+            try:
+                self._stream = av_stream(path)
+                next(self._stream)
+                log.info("Играет (через FFmpeg): %s", path.stem)
+            except Exception as exc2:  # PyAV missing or the file is broken
+                log.warning("Не могу проиграть %s: %s / %s", path.name, exc, exc2)
+                self._stream = None
 
     def _ensure_device(self) -> None:
         if self._device is not None:

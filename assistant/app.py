@@ -127,6 +127,9 @@ def main() -> None:
 
     setup_logging(args.verbose)
     cfg = load_settings()
+    from assistant.log import set_log_phrases
+
+    set_log_phrases(cfg.privacy.log_phrases)
 
     if args.list_devices:
         import sounddevice as sd

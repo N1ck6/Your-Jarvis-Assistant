@@ -20,3 +20,8 @@ _to_delete/
 *.tmp
 Thumbs.db
 .DS_Store
+
+# Installer build (scripts/build.ps1)
+.build-venv/
+build/
+dist/

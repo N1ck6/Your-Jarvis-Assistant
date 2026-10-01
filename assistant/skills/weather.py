@@ -21,6 +21,12 @@ _DAY_WORDS = {"сегодня": 0, "завтра": 1, "послезавтра": 
 _STOP_AFTER_CITY = {"сегодня", "завтра", "послезавтра", "сейчас", "утром", "днём", "днем", "вечером", "ночью", "улице",
                     "будет", "на", "какая", "какой", "градусов", "погода"}
 
+# Part of the day -> hours of the hourly forecast ("будет ли дождь вечером").
+_PARTS = {"утром": "утро", "утро": "утро", "днем": "день", "днём": "день", "вечером": "вечер", "вечер": "вечер",
+          "ночью": "ночь", "ночь": "ночь"}
+_HOURS = {"утро": range(6, 12), "день": range(12, 18), "вечер": range(18, 24), "ночь": range(0, 6)}
+_PART_SAY = {"утро": "Утром", "день": "Днём", "вечер": "Вечером", "ночь": "Ночью"}
+
 WMO = {
     0: "ясно", 1: "преимущественно ясно", 2: "переменная облачность", 3: "пасмурно",
     45: "туман", 48: "изморозь и туман", 51: "лёгкая морось", 53: "морось", 55: "сильная морось",
@@ -63,6 +69,7 @@ class WeatherSkill(Skill):
             return None
         words = set(re.findall(r"[а-яё]+", text))
         day = next((d for w, d in _DAY_WORDS.items() if w in words), 0)
+        part = next((p for w, p in _PARTS.items() if w in words), "")
         city = ""
         m = _CITY.search(text)
         if m:
@@ -72,7 +79,7 @@ class WeatherSkill(Skill):
                     break
                 words.append(w)
             city = " ".join(words)
-        return Intent(self.name, "forecast", {"city": city, "day": day}, text)
+        return Intent(self.name, "forecast", {"city": city, "day": day, "part": part}, text)
 
     def followup(self, text: str, last: Intent) -> Intent | None:
         """"а завтра?", "а послезавтра", "а в Сочи?", "а в Казани завтра" after a weather answer."""
@@ -116,6 +123,27 @@ class WeatherSkill(Skill):
                 return self._geo_cache[key]
         return None
 
+    @staticmethod
+    def _part_of_day(data: dict, day: int, part: str, place: str) -> str:
+        """Hourly forecast for the morning / afternoon / evening / night of the asked day."""
+        hourly = data["hourly"]
+        target = (dt.date.today() + dt.timedelta(days=day + (1 if part == "ночь" and day == 0 and
+                                                                dt.datetime.now().hour >= 6 else 0))).isoformat()
+        rows = [i for i, t in enumerate(hourly["time"]) if t.startswith(target) and int(t[11:13]) in _HOURS[part]]
+        if not rows:
+            return "Почасового прогноза на это время нет."
+        temps = [hourly["temperature_2m"][i] for i in rows]
+        rain = max(hourly["precipitation_probability"][i] or 0 for i in rows)
+        codes = [hourly["weather_code"][i] for i in rows]
+        desc = WMO.get(max(set(codes), key=codes.count), "")
+        when = _PART_SAY[part] + (" завтра" if day == 1 else " послезавтра" if day == 2 else "")
+        text = f"{when} {in_place(place)} {_range(min(temps), max(temps))}, {desc}."
+        if rain >= 30:
+            text += f" Вероятность осадков до {rain}%."
+        elif rain:
+            text += " Осадков почти не будет."
+        return text
+
     async def handle(self, intent: Intent) -> Reply:
         city = str(intent.slots.get("city") or "").strip() or self.app.cfg.assistant.default_city
         day = max(0, min(int(intent.slots.get("day") or 0), 6))
@@ -126,9 +154,10 @@ class WeatherSkill(Skill):
                     return Reply(f"Не нашёл город {city}.")
                 lat, lon, place = geo
                 r = await client.get("https://api.open-meteo.com/v1/forecast", params={
-                    "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": day + 1,
+                    "latitude": lat, "longitude": lon, "timezone": "auto", "forecast_days": day + 2,
                     "current": "temperature_2m,apparent_temperature,weather_code,wind_speed_10m",
                     "daily": "temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max",
+                    "hourly": "temperature_2m,precipitation_probability,weather_code",
                     "wind_speed_unit": "ms",
                 })
                 r.raise_for_status()
@@ -137,6 +166,9 @@ class WeatherSkill(Skill):
             log.warning("Open-Meteo: %s", exc)
             return Reply("Сервис погоды сейчас не отвечает.")
 
+        part = str(intent.slots.get("part") or "")
+        if part and data.get("hourly"):
+            return Reply(self._part_of_day(data, day, part, place))
         daily = data["daily"]
         tmax, tmin = daily["temperature_2m_max"][day], daily["temperature_2m_min"][day]
         desc = WMO.get(daily["weather_code"][day], "")

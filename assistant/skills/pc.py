@@ -14,6 +14,7 @@ import psutil
 from assistant import cmdsandbox, fsaccess
 from assistant.core import Card, Deck
 from assistant.nlu import plural
+from assistant.log import private
 from assistant.skills.base import Intent, Reply, Skill, Tool, run_blocking
 
 log = logging.getLogger("pc")
@@ -23,7 +24,8 @@ _KIND = (r"(?P<kind>файл\w*|фото\w*|фотографи\w*|картин\w
 _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("disk", re.compile(r"(сколько|много ли|осталось ли|хватает ли|хватит ли) (мне )?(свободного |свободно )?(места|памяти) (на |осталось на )?(диске|дисках|компьютере|компе|ссд|ssd|винчестере)|"
                         r"^(свободное место|место на диске|сколько места)$|(кончается|заканчивается|забит|переполнен)\w* ли (место|диск)|^хватает ли (мне )?места")),
-    ("ram", re.compile(r"(сколько|какая) (свободной |занятой |всего )?(оперативн\w+|оперативки|озу|памяти ram)|загрузка (памяти|оперативки)|"
+    ("ram", re.compile(r"(сколько|какая) (свободн\w* |занят\w* |всего )?(оперативн\w+|оперативки|озу|памяти ram)|загрузка (памяти|оперативки)|"
+                       r"сколько (оперативки|оперативной памяти) (свободно|занято)|"
                        r"^сколько (свободной )?памяти$")),
     ("cpu", re.compile(r"загрузка процессора|загружен ли процессор|что (грузит|тормозит|жрет|нагружает) (компьютер|процессор|память|комп|систему)|"
                        r"почему (тормозит|лагает|виснет) (компьютер|комп)|какие процессы (грузят|жрут|больше всего)")),
@@ -111,7 +113,7 @@ class PcSkill(Skill):
             action = s.get("what", "")
         if action == "cmd":
             out = await run_blocking(cmdsandbox.run, self.app.cfg, str(intent.slots.get("command", "")))
-            log.info("cmd: %s -> %d символов", intent.slots.get("command"), len(out))
+            log.info("cmd: %s -> %d символов", private(intent.slots.get("command")), len(out))
             return Reply(tool_result=out)
         handler = getattr(self, f"_do_{action}", None)
         if handler is None:
@@ -134,7 +136,7 @@ class PcSkill(Skill):
     async def _do_ram(self, s) -> Reply:
         m = psutil.virtual_memory()
         text = (f"Занято {fsaccess.human_size(m.used)} из {fsaccess.human_size(m.total)}, "
-                f"это {round(m.percent)} процентов. Свободно {fsaccess.human_size(m.available)}.")
+                f"это {round(m.percent)}%. Свободно {fsaccess.human_size(m.available)}.")
         return Reply(text, tool_result=text)
 
     async def _do_cpu(self, s) -> Reply:
@@ -159,7 +161,7 @@ class PcSkill(Skill):
         top_mem = sorted(rows, key=lambda r: r[1], reverse=True)[:3]
         cpu_txt = ", ".join(f"{n.removesuffix('.exe')} {round(c)}%" for c, _, n in top_cpu if c >= 1)
         mem_txt = ", ".join(f"{n.removesuffix('.exe')} {fsaccess.human_size(m)}" for _, m, n in top_mem)
-        text = f"Процессор загружен на {round(total)} процентов." + (f" Больше всего: {cpu_txt}." if cpu_txt else "") + \
+        text = f"Процессор загружен на {round(total)}%." + (f" Больше всего: {cpu_txt}." if cpu_txt else "") + \
             f" По памяти: {mem_txt}."
         return Reply(text, tool_result=text)
 
@@ -177,7 +179,7 @@ class PcSkill(Skill):
         if b is None:
             return Reply("Батареи нет — это настольный компьютер.")
         state = "заряжается" if b.power_plugged else "от батареи"
-        return Reply(f"Заряд {round(b.percent)} процентов, {state}.")
+        return Reply(f"Заряд {round(b.percent)}%, {state}.")
 
     async def _do_ip(self, s) -> Reply:
         def local_ip():

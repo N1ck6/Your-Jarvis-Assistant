@@ -33,13 +33,19 @@ earcon_volume = 0.25
 engine = "vosk"
 model = "models/vosk-model-small-ru-0.22"
 phrases = ["джарвис", "джервис"]
-# Extra words in the grammar reduce false triggers on similar sounds.
-decoys = ["джон", "джей", "давай", "привет", "жарко"]
+# Extra words in the grammar catch similar sounds instead of the name. Measured with scripts/wake_bench.py on 35 min
+# of speech full of near words: 179 -> 18 Vosk triggers per run, recall of "Джарвис" unchanged (97%).
+decoys = ["джон", "джей", "давай", "привет", "жарко", "дарвин", "гарвард", "харрис", "харви", "джерри", "джордж", "чарльз",
+          "арвид", "джимми", "джексон", "джеймс", "джейсон", "ярмарка", "джаз", "сервис", "гарри", "чарли", "давид", "жара",
+          "париж", "джинсы"]
 # Heard only while Jarvis is talking: he stops and listens for the next command.
 stop_words = ["стоп", "хватит", "замолчи", "тихо", "подожди", "погоди", "стой", "секунду", "отмена"]
 # Double-check the wake word in the STT transcript.
 verify_with_stt = true
 verify_ratio = 70
+# React only to your voice (enroll: "Джарвис, запомни мой голос"). Similarity of voice prints: ~0.7 you, ~0.3 others.
+owner_only = false
+owner_threshold = 0.5
 
 [stt]
 engine = "gigaam"
@@ -119,8 +125,8 @@ allow_cmd = true
 
 [skills]
 # Order matters: the first module whose phrase matches wins. User scenarios go first.
-enabled = ["scenarios", "system", "media", "music", "dictation", "selection", "screen", "notes", "windows",
-           "search", "timers", "focus", "memory", "briefing", "agenda", "pc", "explain", "voice", "weather", "apps"]
+enabled = ["scenarios", "calc", "system", "power", "media", "music", "dictation", "selection", "screen", "notes", "windows",
+           "search", "timers", "focus", "voiceprint", "memory", "briefing", "news", "agenda", "pc", "explain", "voice", "weather", "apps"]
 
 [apps]
 browser_home = "https://ya.ru"
@@ -147,6 +153,16 @@ cache_min = 10
 [briefing]
 # "08:30" = say the morning briefing automatically every day; "" = only on request.
 auto_time = ""
+# Two fresh headlines of the default city in the briefing.
+news = true
+
+[news]
+# Google News RSS by default (main news, a city, a topic). Own feeds: city or "главное" -> RSS url,
+# e.g. { "москва" = "https://www.m24.ru/rss.xml" }.
+feeds = {}
+cache_min = 10
+# Headlines spoken aloud (brief, like Jarvis); up to 8 are shown on the card.
+spoken = 2
 
 [focus]
 work_min = 25
@@ -173,6 +189,17 @@ hotkey_dictation = "<ctrl>+<alt>+d"
 hotkey_screen = "<ctrl>+<alt>+s"
 # Long cloud answers are also shown as a card (chars).
 card_threshold_chars = 320
+# Start with Windows (a shortcut in the Startup folder, made when you switch it on in the settings).
+autostart = false
+# Animated orb in the corner of the screen: listening / thinking / speaking.
+hud = false
+# Once a day ask GitHub whether there is a newer version (only a notification, nothing is installed).
+check_updates = true
+
+[privacy]
+# Write what you say and what Jarvis answers into data/logs: auto = only when started with a console
+# (development, python -m assistant), not from the tray shortcut (pythonw) | on | off.
+log_phrases = "auto"
 
 [voicelab]
 host = "127.0.0.1"

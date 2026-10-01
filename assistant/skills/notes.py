@@ -128,6 +128,13 @@ class NotesSkill(Skill):
         self._write(name, items)
         return best
 
+    def _undo_add(self, name: str, added: list[str]):
+        async def undo() -> Reply:
+            items = [i for i in self.items(name) if i not in added]
+            self._write(name, items)
+            return Reply(f"Убрал из списка «{name}».")
+        return undo if added else None
+
     # ------------------------------------------------------------------ matching
     def match(self, text: str) -> Intent | None:
         default = self.app.cfg.notes.default_list
@@ -185,13 +192,13 @@ class NotesSkill(Skill):
             if intent.slots.get("free"):
                 raw = _RAW_TRIGGER.sub("", intent.raw).strip() if intent.raw else intent.slots["items"]
                 stamp = dt.datetime.now().strftime("%d.%m %H:%M")
-                self.add(name, [f"{stamp} — {raw[:1].upper() + raw[1:]}"])
-                return Reply("Записал.", reaction="ok", listen_after=False)
+                added = self.add(name, [f"{stamp} — {raw[:1].upper() + raw[1:]}"])
+                return Reply("Записал.", reaction="ok", listen_after=False, undo=self._undo_add(name, added))
             new = split_items(str(intent.slots["items"]), intent.raw or str(intent.slots["items"]))
             added = self.add(name, new)
             if not added:
                 return Reply(f"Это уже есть в списке «{name}».")
-            return Reply(f"Добавил в «{name}»: {', '.join(added)}.", listen_after=False)
+            return Reply(f"Добавил в «{name}»: {', '.join(added)}.", listen_after=False, undo=self._undo_add(name, added))
         if intent.action == "read":
             items = self.items(name)
             if not items:
@@ -206,14 +213,25 @@ class NotesSkill(Skill):
             removed = self.remove(name, str(intent.slots["item"]))
             if not removed:
                 return Reply(f"Не нашёл «{intent.slots['item']}» в списке «{name}».")
-            return Reply(f"Вычеркнул {removed}.", listen_after=False)
+
+            async def put_back() -> Reply:
+                self.add(name, [removed])
+                return Reply(f"Вернул {removed} в список.")
+
+            return Reply(f"Вычеркнул {removed}.", listen_after=False, undo=put_back)
         if intent.action == "clear":
-            n = len(self.items(name))
+            before = self.items(name)
+            n = len(before)
             if not n:
                 return Reply(f"Список «{name}» и так пуст.")
 
+            async def restore() -> Reply:
+                self._write(name, before + [i for i in self.items(name) if i not in before])
+                return Reply(f"Вернул список «{name}».")
+
             async def do() -> Reply:
                 self._write(name, [])
+                self.app.brain.last_undo = restore
                 return Reply(f"Список «{name}» очищен.", listen_after=False)
 
             return Reply(f"Очистить список «{name}», {n} {plural(n, 'пункт', 'пункта', 'пунктов')}?", confirm=do)

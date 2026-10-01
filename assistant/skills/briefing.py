@@ -72,6 +72,18 @@ class BriefingSkill(Skill):
                 lines.append(text)
                 cards.append(Card("Календарь", text, ""))
 
+        news = self._skill("news")
+        if news and self.app.cfg.briefing.news:
+            try:
+                city = self.app.cfg.assistant.default_city
+                items = await news._fetch(news._url(city, ""))
+                top = sorted(items, key=lambda h: -h.published)[:2]
+                if top:
+                    lines.append(f"Новости {city}: " + ". ".join(h.title.rstrip(".") for h in top) + ".")
+                    cards.append(Card("Новости", "\n".join(f"- {h.title}" for h in top), ""))
+            except Exception as exc:
+                log.warning("новости для сводки: %s", exc)
+
         timers = self._skill("timers")
         if timers and timers.timers:
             n = len(timers.timers)

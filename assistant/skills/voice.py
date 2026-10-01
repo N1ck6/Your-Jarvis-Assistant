@@ -35,9 +35,16 @@ class VoiceSkill(Skill):
             self.app.ui.open_url(self.app.voicelab_url)
             return Reply("Открываю страницу выбора голоса.", listen_after=False)
         tts = self.app.tts
+        before = tts.rate
         tts.rate = round(min(1.5, max(0.7, tts.rate + float(intent.slots["delta"]))), 2)
         save_override("tts.rate", tts.rate)
-        return Reply("Хорошо, так лучше?")
+
+        async def undo() -> Reply:
+            tts.rate = before
+            save_override("tts.rate", before)
+            return Reply("Вернул прежнюю скорость.")
+
+        return Reply("Хорошо, так лучше?", undo=undo)
 
 
 def create() -> Skill:

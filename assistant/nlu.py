@@ -167,14 +167,73 @@ _WORD = re.compile(r"[\wё-]+", re.I)
 _LEADING_FILLER = re.compile(r"^(?:\s*(?:эй|слушай|скажи|пожалуйста|ну|а|так|окей|ок)[,!.\s]+)+", re.I)
 
 
+def _sound(word: str) -> str:
+    """Rough sound form for fuzzy name matching: 'Джарвис', 'Жарвес', 'Ярвис' come closer to each other."""
+    w = word.lower().replace("ё", "е").replace("дж", "ж").replace("чж", "ж")
+    return re.sub(r"^[яй]", "ж", w)
+
+
+# How the recognizer mangles "Джарвис": Жарвис, Ярвес, Жервес, Джарес, Джарлис (+ case endings).
+# Near words that are NOT the name fail this shape: Дарвин, Харрис, Джерри, Джейсон, Гарвард.
+_NAME_SHAPE = re.compile(r"^(?:(?:дж|ж|чж|ш|й)[аеэиоя]|я)\w{0,4}[сз](?:а|у|е|ом|ы)?$")
+
+
+def wake_score(word: str, phrases: list[str], min_ratio: int = 70) -> float:
+    """How much a single recognized word looks like the wake word (0..100+); below `min_ratio` it is not the name."""
+    word = _LATIN_WORDS.get(word.lower(), word.lower())  # "Jarvis" from the recognizer
+    raw = max(fuzz.ratio(word, p) for p in phrases)
+    if raw >= max(min_ratio, 85):
+        return raw
+    jarvis = any(_sound(p).startswith("жарв") or _sound(p).startswith("жерв") for p in phrases)
+    if not jarvis and raw >= min_ratio:
+        return raw  # a custom wake word: plain similarity, no Jarvis-specific sound rules
+    if jarvis and 4 <= len(word) <= 10 and _NAME_SHAPE.match(word.replace("ё", "е")):
+        sound = max(fuzz.ratio(_sound(word), _sound(p)) for p in phrases)
+        if sound >= 60:
+            return max(min_ratio, sound)
+    return 0.0
+
+
 def find_wake(text: str, phrases: list[str], min_ratio: int = 70) -> tuple[int, int] | None:
-    """Span of the wake word in the text (fuzzy: 'Джарвис', 'Жарвис', 'Джервис')."""
+    """Span of the best wake-word match in the text (fuzzy: 'Джарвис', 'Жарвис', 'Джервис', 'Ярвес', 'Джарес')."""
+    best: tuple[float, tuple[int, int]] | None = None
     for m in _WORD.finditer(text):
-        word = m.group(0).lower()
-        word = _LATIN_WORDS.get(word, word)  # "Jarvis" from the recognizer
-        if any(fuzz.ratio(word, p) >= min_ratio for p in phrases):
-            return m.span()
-    return None
+        score = wake_score(m.group(0), phrases, min_ratio)
+        if score >= min_ratio and (best is None or score > best[0]):
+            best = (score, m.span())
+    return best[1] if best else None
+
+
+def is_bare_wake(text: str, phrases: list[str]) -> bool:
+    """The recognizer heard only (a mangled) name: 'Жарес.', 'Джарвис?' — no command to run."""
+    words = _WORD.findall(text)
+    return len(words) == 1 and wake_score(words[0], phrases) > 0
+
+
+def is_echo(heard: str, said: str) -> bool:
+    """The microphone caught the tail of Jarvis's own answer ('84, 3' after '…84,43 ₽…')."""
+    h, s = normalize_command(heard, strip_polite=False), normalize_command(said, strip_polite=False)
+    if not h or not s or len(h) > len(s):
+        return False
+    said_words = s.split()
+    numbers = [w for w in said_words if w.isdigit()]
+
+    def own(word: str) -> bool:
+        return word in said_words or (word.isdigit() and any(word in n for n in numbers))
+
+    return all(own(w) for w in h.split())
+
+
+def strip_echo(heard: str, said: str) -> str:
+    """Removes Jarvis's own words ('Слушаю, сэр') from the start of what the microphone heard."""
+    own = set(normalize_command(said.replace("-", " "), strip_polite=False).split())
+    if not own:
+        return heard
+    words = heard.split()
+    i = 0
+    while i < len(words) and all(w in own for w in normalize_command(words[i].replace("-", " "), strip_polite=False).split()):
+        i += 1
+    return " ".join(words[i:]).strip(" ,.")
 
 
 def strip_wake(text: str, phrases: list[str], min_ratio: int = 70) -> str:

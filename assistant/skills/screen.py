@@ -24,19 +24,41 @@ _TRIGGER = re.compile(
     rf"^(сделай )?(скрин|скриншот)|^разбери скрин|^помощь с экраном|^что на экране$|^экран$)"
 )
 
+_OCR = re.compile(rf"^(скопируй|распознай|вытащи|извлеки|сними|перепиши|забери)\s+(весь\s+)?текст\s+(с|со|на|из)\s+{_SCREEN}|"
+                  rf"^(текст с экрана|распознай текст|скопируй текст с картинки)$")
+OCR_PROMPT = ("Перепиши весь текст с изображения дословно, сохраняя строки и порядок. Без пояснений, кавычек и markdown. "
+              "Если текста нет, ответь одним словом: НЕТ.")
+
 PROMPT = """Пользователь сам выделил эту область экрана и сказал: «{question}».
 Ответь по-русски на его просьбу по изображению: что это, в чём суть, что делать дальше.
 Ответ будет озвучен: 2–4 коротких предложения без markdown. Если на картинке текст на другом языке и просят перевести — переведи."""
 
 
 class ScreenSkill(Skill):
+    async def _ocr(self, png: bytes) -> Reply:
+        """Text from the selected region into the clipboard (a screenshot, a video, a locked PDF)."""
+        from assistant import winutil
+        from assistant.core import Card, Deck
+        from assistant.skills.base import run_blocking
+
+        text = (await self.app.llm.complete(self.app.cfg.llm.vision_chain, [Msg("user", OCR_PROMPT, images=[png])],
+                                            web=False, max_tokens=1500)).strip()
+        if not text or text.upper().startswith("НЕТ") or text.startswith("Не получилось"):
+            return Reply("Текста в этой области не нашёл.")
+        await run_blocking(winutil.set_clipboard_text, text)
+        self.app.ui.show_deck(Deck(title="Текст с экрана", cards=[Card("", text, "")], done=True))
+        return Reply("Текст в буфере обмена.", reaction="ok", tool_result=text[:500], listen_after=False)
+
     name = "screen"
     title = "Помощь с экраном"
     examples = [
         'что на экране',
+        'скопируй текст с экрана',
     ]
 
     def match(self, text: str) -> Intent | None:
+        if _OCR.search(text):
+            return Intent(self.name, "ocr", text=text)
         if _TRIGGER.search(text):
             return Intent(self.name, "help", text=text)
         return None
@@ -50,6 +72,8 @@ class ScreenSkill(Skill):
         if not png:
             return Reply(listen_after=False)
         log.info("Область экрана: %d КБ", len(png) // 1024)
+        if intent.action == "ocr":
+            return await self._ocr(png)
         question = intent.raw or intent.text or "помоги с этим"
         messages = [Msg("user", PROMPT.format(question=question), images=[png])]
         return Reply(stream=self.app.llm.stream(self.app.cfg.llm.vision_chain, messages, web=False, max_tokens=500))

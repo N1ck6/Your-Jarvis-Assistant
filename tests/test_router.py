@@ -37,7 +37,7 @@ class FakeLocal:
         self.answers = []
         self.prompts = []
 
-    async def complete(self, messages, fmt=None, max_tokens=None):
+    async def complete(self, messages, fmt=None, max_tokens=None, model=""):
         self.prompts.append(messages[-1].content)
         return self.answers.pop(0)
 

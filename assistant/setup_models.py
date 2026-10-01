@@ -40,6 +40,9 @@ def main() -> int:
         from assistant.tts.manager import TtsManager
 
         TtsManager(cfg.tts.voice).preload()
+        from assistant.tts.english import _load_cmu
+
+        _load_cmu()
         from assistant.voicepack import download_packs
 
         download_packs()

@@ -23,7 +23,7 @@ from typing import Callable
 import numpy as np
 import sounddevice as sd
 
-from assistant.audio.player import resolve_device
+from assistant.audio.player import GATE, resolve_device
 from assistant.audio.vad import FRAME, SileroVad
 from assistant.audio.wake import VoskWake
 
@@ -41,7 +41,9 @@ class Mode(str, enum.Enum):
 @dataclass
 class Utterance:
     audio: np.ndarray   # float32 16 kHz mono
-    source: str         # "wake" | "await" | "dictation"
+    source: str         # "wake" | "await" (bare wake, hotkey, after "стоп") | "hot" (window after an answer) | "dictation"
+    voiced_sec: float = 0.0   # how much of it the VAD called speech
+    barge_in: bool = False    # the wake word came while Jarvis was talking (his voice is in the audio)
 
 
 @dataclass
@@ -88,6 +90,8 @@ class ListenerCore:
         self._capture_silence = 0
         self._capture_after = 0     # voiced frames since the capture started (wake point)
         self._capture_source = "wake"
+        self._capture_barge = False
+        self._await_source = "await"
         self._await_deadline = 0.0
         self._await_voiced = 0
         self._dict_frames: list[np.ndarray] = []
@@ -104,9 +108,10 @@ class ListenerCore:
             self.mode = Mode.WAIT
             self._reset_segment()
 
-    def to_await(self, seconds: float) -> None:
+    def to_await(self, seconds: float, source: str = "await") -> None:
         with self._lock:
             self.mode = Mode.AWAIT
+            self._await_source = source
             self._await_deadline = time.monotonic() + seconds
             self._await_voiced = 0
             self.pre_roll.clear()  # it may hold Jarvis's own voice from the speakers
@@ -139,9 +144,10 @@ class ListenerCore:
         self._silence = 0
         self.wake.reset()
 
-    def _start_capture(self, initial: list[np.ndarray], source: str) -> None:
+    def _start_capture(self, initial: list[np.ndarray], source: str, barge_in: bool = False) -> None:
         self.mode = Mode.CAPTURE
         self._capture = list(initial)
+        self._capture_barge = barge_in
         self._capture_voiced = 1
         self._capture_silence = 0
         # From a wake word the question still has to start; from AWAIT it is already being spoken.
@@ -191,8 +197,12 @@ class ListenerCore:
         if self.wake.feed_wake(pcm):
             log.info("Кодовое слово")
             segment = list(self._segment)
+            barge_in = self.assistant_speaking
+            if barge_in:
+                # Before the name it is Jarvis talking: keep only the name itself (+ recognition lag).
+                segment = segment[-int(2.0 / self.frame_sec):]
             self._reset_segment()
-            self._start_capture(segment, "wake")
+            self._start_capture(segment, "wake", barge_in)
             self.ev.on_wake()
 
     def _process_capture(self, frame: np.ndarray, voiced: bool) -> None:
@@ -207,11 +217,11 @@ class ListenerCore:
         limit = self.end_frames if question_started else self.grace_frames
         if self._capture_silence >= limit or len(self._capture) >= self.max_frames:
             audio = np.concatenate(self._capture).astype(np.float32) / 32768.0
-            source = self._capture_source
+            utt = Utterance(audio, self._capture_source, self._capture_voiced * self.frame_sec, self._capture_barge)
             self._capture = []
             self.mode = Mode.WAIT
             self._reset_segment()
-            self.ev.on_utterance(Utterance(audio, source))
+            self.ev.on_utterance(utt)
 
     def _process_dictate(self, frame: np.ndarray, voiced: bool) -> None:
         self._dict_frames.append(frame)
@@ -231,7 +241,7 @@ class ListenerCore:
         if voiced:
             self._await_voiced += 1
             if self._await_voiced >= 2:  # ~64 ms of speech, ignores clicks
-                self._start_capture(list(self.pre_roll) + [frame], "await")
+                self._start_capture(list(self.pre_roll) + [frame], self._await_source)
                 self.ev.on_speech_start()
                 return
         else:
@@ -248,7 +258,9 @@ class Microphone:
     def __init__(self, core: ListenerCore, device: str = "", sr: int = 16000) -> None:
         self.core = core
         self.sr = sr
+        self.device_spec = device
         self.device = resolve_device(device, "input")
+        self.last_frame = time.monotonic()
         self._q: queue.Queue[np.ndarray] = queue.Queue(maxsize=300)
         self._stream: sd.InputStream | None = None
         self._thread: threading.Thread | None = None
@@ -261,6 +273,7 @@ class Microphone:
     def _callback(self, indata, _frames, _time, status) -> None:
         if status and status.input_overflow:
             log.debug("input overflow")
+        self.last_frame = time.monotonic()
         try:
             self._q.put_nowait(indata[:, 0].copy())
         except queue.Full:
@@ -288,19 +301,44 @@ class Microphone:
         if self._stream is not None:
             return
         self.core.to_wait()
-        self._stream = sd.InputStream(samplerate=self.sr, channels=1, dtype="int16", blocksize=FRAME,
-                                      device=self.device, callback=self._callback)
-        self._stream.start()
+        GATE.__enter__()  # held while the stream is open: device re-reads wait for it to close
+        try:
+            self._stream = sd.InputStream(samplerate=self.sr, channels=1, dtype="int16", blocksize=FRAME,
+                                          device=self.device, callback=self._callback)
+            self._stream.start()
+        except Exception:
+            self._stream = None
+            GATE.__exit__()
+            raise
+        self.last_frame = time.monotonic()
         name = sd.query_devices(self._stream.device)["name"]
         log.info("Микрофон: %s", name)
+
+    @property
+    def silent_for(self) -> float:
+        """Seconds since the last audio block: a removed USB microphone just stops calling back."""
+        return time.monotonic() - self.last_frame if self._stream is not None else 0.0
+
+    def reopen(self, refresh: Callable[[], bool]) -> None:
+        """Closes the stream, lets PortAudio re-read devices (`refresh`) and opens the current microphone."""
+        was_open = self._stream is not None
+        self.pause()
+        refresh()
+        self.device = resolve_device(self.device_spec, "input")
+        if was_open:
+            self.resume()
 
     def pause(self) -> None:
         """Closes the stream so Windows shows the microphone as not in use."""
         if self._stream is None:
             return
-        self._stream.stop()
-        self._stream.close()
+        try:
+            self._stream.stop()
+            self._stream.close()
+        except sd.PortAudioError as exc:
+            log.warning("Микрофон закрылся с ошибкой: %s", exc)
         self._stream = None
+        GATE.__exit__()
         with self._q.mutex:
             self._q.queue.clear()
         self.core.mode = Mode.PAUSED

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -20,7 +21,31 @@ class ProviderError(Exception):
 
 
 class QuotaError(ProviderError):
-    """Rate limit / free quota exhausted; the provider is put on cooldown."""
+    """Rate limit / free quota exhausted; the provider is put on cooldown.
+
+    retry_after: seconds the API asked to wait (None = unknown); daily: the daily quota is over."""
+
+    def __init__(self, message: str, retry_after: float | None = None, daily: bool = False) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+        self.daily = daily
+
+
+_WAIT = re.compile(r"(?:try again in|retry in|retrydelay\W+)\s*(?:(\d+)h)?\s*(?:(\d+)m(?!s))?\s*(?:([\d.]+)s)?", re.I)
+
+
+def parse_wait(text: str) -> float | None:
+    """'Please try again in 2m30.5s' / "'retryDelay': '17s'" -> seconds."""
+    m = _WAIT.search(text)
+    if not m or not any(m.groups()):
+        return None
+    h, mnt, s = (float(g) if g else 0.0 for g in m.groups())
+    return h * 3600 + mnt * 60 + s
+
+
+def _is_daily(text: str) -> bool:
+    low = text.lower()
+    return any(k in low for k in ("per day", "perday", "(rpd)", "(tpd)", "daily"))
 
 
 class AuthError(ProviderError):
@@ -48,6 +73,10 @@ class Provider(ABC):
     @abstractmethod
     def available(self) -> bool: ...
 
+    def can_search(self) -> bool:
+        """Answers with fresh data from the internet right now."""
+        return False
+
     @abstractmethod
     def stream(self, messages: list[Msg], *, web: bool, max_tokens: int | None = None) -> AsyncIterator[str]:
         """Yields text deltas. Must raise before the first delta if the request fails."""
@@ -71,6 +100,9 @@ class GeminiProvider(Provider):
 
     def _search_allowed(self) -> bool:
         return time.monotonic() >= self._search_blocked_until
+
+    def can_search(self) -> bool:
+        return self.cfg.web_search and self._search_allowed()
 
     def _get_client(self):
         if self._client is None:
@@ -144,7 +176,8 @@ class GeminiProvider(Provider):
                     log.warning("gemini/%s: %s %s", model, code, str(exc)[:160])
                     break  # 429 / 404 / 5xx: try the next model
         if last_exc is not None and getattr(last_exc, "code", 0) == 429:
-            raise QuotaError(f"gemini: {last_exc}")
+            text = str(last_exc)
+            raise QuotaError(f"gemini: {last_exc}", parse_wait(text), _is_daily(text))
         raise ProviderError(f"gemini: {last_exc}")
 
 
@@ -162,6 +195,9 @@ class GroqProvider(Provider):
     def available(self) -> bool:
         return bool(self.key and self.cfg.models)
 
+    def can_search(self) -> bool:
+        return self.cfg.web_search and any(m.startswith("openai/gpt-oss") for m in self.cfg.models)
+
     def _get_client(self):
         if self._client is None:
             from openai import AsyncOpenAI
@@ -176,6 +212,8 @@ class GroqProvider(Provider):
         payload = [{"role": m.role, "content": m.content} for m in messages if m.role in ("system", "user", "assistant")]
         last_exc: Exception | None = None
         quota = False
+        waits: list[float] = []
+        daily = True
         for model in self.cfg.models:
             kwargs: dict[str, Any] = {
                 "model": model,
@@ -207,14 +245,20 @@ class GroqProvider(Provider):
                 return
             except openai.RateLimitError as exc:
                 last_exc, quota = exc, True
-                log.warning("groq/%s: лимит", model)
+                header = exc.response.headers.get("retry-after") if exc.response is not None else None
+                wait = float(header) if header and header.replace(".", "", 1).isdigit() else parse_wait(str(exc))
+                waits.append(wait if wait is not None else 60.0)
+                daily = daily and _is_daily(str(exc))
+                log.warning("groq/%s: лимит%s, ждать %s с", model, " дневной" if _is_daily(str(exc)) else "",
+                            round(waits[-1]))
             except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
                 raise AuthError("groq: неверный GROQ_API_KEY или нет доступа из региона (VPN?)") from exc
             except (openai.APIStatusError, openai.APIConnectionError, openai.APITimeoutError) as exc:
                 last_exc = exc
                 log.warning("groq/%s: %s", model, str(exc)[:160])
         if quota:
-            raise QuotaError(f"groq: {last_exc}")
+            # Every model hit its limit: the shortest wait decides when Groq is worth trying again.
+            raise QuotaError(f"groq: {last_exc}", min(waits) if waits else None, daily)
         raise ProviderError(f"groq: {last_exc}")
 
 
@@ -259,15 +303,28 @@ class OllamaProvider(Provider):
             out.append(d)
         return out
 
-    async def warmup(self) -> None:
+    async def warmup(self, model: str = "") -> bool:
+        model = model or self.cfg.model
         try:
-            await self.client.chat(model=self.cfg.model, messages=[{"role": "user", "content": "привет"}],
+            await self.client.chat(model=model, messages=[{"role": "user", "content": "привет"}],
                                    think=False, keep_alive=self.cfg.keep_alive, options={"num_predict": 1})
-            self.healthy = True
-            log.info("Локальная модель %s загружена", self.cfg.model)
+            if model == self.cfg.model:
+                self.healthy = True
+            log.info("Локальная модель %s загружена", model)
+            return True
         except Exception as exc:
-            self.healthy = False
-            log.warning("Ollama недоступна (%s). Запустите Ollama.", exc)
+            if model == self.cfg.model:
+                self.healthy = False
+            log.warning("Модель %s недоступна (%s). Запустите Ollama или скачайте модель: ollama pull %s", model, exc, model)
+            return False
+
+    async def unload(self, model: str) -> None:
+        """Frees the model's video memory now instead of after keep_alive (30 min)."""
+        try:
+            await self.client.generate(model=model, prompt="", keep_alive=0)
+            log.info("Модель %s выгружена из памяти", model)
+        except Exception as exc:
+            log.debug("Не выгрузил %s: %s", model, exc)
 
     async def stream(self, messages: list[Msg], *, web: bool = False, max_tokens: int | None = None) -> AsyncIterator[str]:
         vision = any(m.images for m in messages)
@@ -308,9 +365,10 @@ class OllamaProvider(Provider):
                 turn.text += text
                 yield text
 
-    async def complete(self, messages: list[Msg], *, fmt: dict | str | None = None, max_tokens: int | None = None) -> str:
+    async def complete(self, messages: list[Msg], *, fmt: dict | str | None = None, max_tokens: int | None = None,
+                       model: str = "") -> str:
         try:
-            resp = await self.client.chat(model=self.cfg.model, messages=self._to_ollama(messages), think=False,
+            resp = await self.client.chat(model=model or self.cfg.model, messages=self._to_ollama(messages), think=False,
                                           format=fmt, keep_alive=self.cfg.keep_alive, options=self._options(max_tokens))
         except Exception as exc:
             raise ProviderError(f"ollama: {exc}") from exc

@@ -49,6 +49,8 @@ class WakeCfg(BaseModel):
     stop_words: list[str] = Field(default_factory=lambda: ["стоп"])
     verify_with_stt: bool = True
     verify_ratio: int = 70
+    owner_only: bool = False         # react only to the enrolled owner's voice ("запомни мой голос")
+    owner_threshold: float = 0.5     # voice print similarity: ~0.7 the same person, ~0.3 someone else
 
 
 class SttCfg(BaseModel):
@@ -104,6 +106,7 @@ class LlmCfg(BaseModel):
 class RouterCfg(BaseModel):
     enabled: bool = True
     provider: str = "auto"          # auto (local if running, else cloud) | local | cloud
+    model: str = ""                 # small local model just for routing ("" = the main local model)
     context_turns: int = 4
     timeout_sec: float = 6.0
     cache_fresh_min: int = 20       # answers about fresh data (rates, news)
@@ -145,6 +148,13 @@ class CalendarCfg(BaseModel):
 
 class BriefingCfg(BaseModel):
     auto_time: str = ""                # "08:30" = say the briefing automatically every day
+    news: bool = True                  # two headlines of the default city in the briefing
+
+
+class NewsCfg(BaseModel):
+    feeds: dict[str, str] = Field(default_factory=dict)   # city / "главное" -> RSS url (default: Google News)
+    cache_min: int = 10
+    spoken: int = 2
 
 
 class FocusCfg(BaseModel):
@@ -172,6 +182,13 @@ class UiCfg(BaseModel):
     hotkey_dictation: str = "<ctrl>+<alt>+d"   # hold to dictate
     hotkey_screen: str = "<ctrl>+<alt>+s"
     card_threshold_chars: int = 320
+    autostart: bool = False         # a shortcut in the Startup folder (Settings -> Основное)
+    hud: bool = False               # the animated orb that shows what Jarvis is doing
+    check_updates: bool = True      # once a day: is there a newer version on GitHub
+
+
+class PrivacyCfg(BaseModel):
+    log_phrases: str = "auto"       # auto (with a console window) | on | off: what you say goes into data/logs
 
 
 class VoiceLabCfg(BaseModel):
@@ -196,9 +213,11 @@ class Settings(BaseModel):
     music: MusicCfg = Field(default_factory=MusicCfg)
     calendar: CalendarCfg = Field(default_factory=CalendarCfg)
     briefing: BriefingCfg = Field(default_factory=BriefingCfg)
+    news: NewsCfg = Field(default_factory=NewsCfg)
     focus: FocusCfg = Field(default_factory=FocusCfg)
     search: SearchCfg = Field(default_factory=SearchCfg)
     ui: UiCfg = Field(default_factory=UiCfg)
+    privacy: PrivacyCfg = Field(default_factory=PrivacyCfg)
     voicelab: VoiceLabCfg = Field(default_factory=VoiceLabCfg)
 
     def resolve(self, rel: str) -> Path:

@@ -156,3 +156,19 @@ def test_router_disabled_uses_heuristic(env):
     app.cfg.router.enabled = False
     reply = run(app.brain.handle("что такое фотосинтез"))
     assert run(drain(reply)) == "облачный ответ"
+
+
+def test_second_action_without_verb_goes_to_the_model(env):
+    """"открой телеграм и другой браузер": the module alone would open only the first one."""
+    app, media, apps = env
+    app.llm.local.answers = ["К: открой телеграм; открой браузер"]
+    run(app.brain.handle("открой телеграм и другой браузер"))
+    assert apps.calls == [("открой", "телеграм"), ("открой", "браузер")]
+
+
+def test_second_action_one_command_answer_keeps_the_module(env):
+    app, media, apps = env
+    app.llm.local.answers = ["К: открой телеграм и в нем чат"]
+    run(app.brain.handle("открой телеграм и в нем чат"))
+    assert apps.calls == [("открой", "телеграм и в нем чат")]
+    assert len(app.llm.local.prompts) == 1      # the model is asked once, not again later

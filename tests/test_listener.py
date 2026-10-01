@@ -146,3 +146,33 @@ def test_bare_wake_ends_after_grace(tts):
     run(core, np.concatenate([trimmed(tts, "Джарвис."), pause(2.0)]))  # the grace is 2 s
     utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
     assert len(utt) == 1 and utt[0][2] < 4.0
+
+
+def test_hot_window_name_then_pause_then_request_is_one_utterance(tts):
+    """"Джарвис… (pause) …объясни иначе" in the hot window: the name alone must not end the recording."""
+    log = []
+    core = make_core(log)
+    core.to_await(8, "hot")
+    pcm = np.concatenate([pause(0.3), trimmed(tts, "Джарвис."), pause(1.4), trimmed(tts, "Объясни это другими словами.")])
+    for i in range(0, len(pcm) - FRAME + 1, FRAME):
+        core.process(pcm[i:i + FRAME])
+    run(core, pause(0.1))
+    utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
+    assert len(utt) == 1 and utt[0][1] == "hot" and utt[0][2] > 2.5, utt
+
+
+def test_rearm_keeps_speech_already_started(tts):
+    """The window re-opens while the user already speaks again: that speech starts the command."""
+    log = []
+    core = make_core(log)
+    pcm = trimmed(tts, "Поставь таймер на пять минут.")
+    half = len(pcm) // 2 // FRAME * FRAME
+    for i in range(0, half, FRAME):
+        core.process(pcm[i:i + FRAME])     # WAIT mode: VAD is collecting a segment
+    core.to_await(8, "await", resume=True)
+    assert core.mode is Mode.CAPTURE
+    rest = np.concatenate([pcm[half:], pause(1.5)])
+    for i in range(0, len(rest) - FRAME + 1, FRAME):
+        core.process(rest[i:i + FRAME])
+    utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
+    assert len(utt) == 1 and utt[0][1] == "await" and utt[0][2] >= len(pcm) / 16000 * 0.9

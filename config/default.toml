@@ -8,7 +8,7 @@ address = "сэр"
 language = "ru"
 default_city = "Москва"
 # Seconds after an answer during which you can speak without the wake word.
-hot_window_sec = 5.0
+hot_window_sec = 8.0
 # Dialog context is forgotten after this many seconds of silence.
 dialog_ttl_sec = 180
 dialog_max_turns = 6
@@ -125,7 +125,7 @@ allow_cmd = true
 
 [skills]
 # Order matters: the first module whose phrase matches wins. User scenarios go first.
-enabled = ["scenarios", "calc", "system", "power", "media", "music", "dictation", "selection", "screen", "notes", "windows",
+enabled = ["scenarios", "calc", "visual", "system", "power", "media", "music", "dictation", "selection", "screen", "notes", "windows",
            "search", "timers", "focus", "voiceprint", "memory", "briefing", "news", "agenda", "pc", "explain", "voice", "weather", "apps"]
 
 [apps]

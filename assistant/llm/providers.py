@@ -1,6 +1,7 @@
 """LLM providers: Gemini (Google Search grounding), Groq (browser_search), local Ollama."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -316,6 +317,14 @@ class OllamaProvider(Provider):
             if model == self.cfg.model:
                 self.healthy = False
             log.warning("Модель %s недоступна (%s). Запустите Ollama или скачайте модель: ollama pull %s", model, exc, model)
+            return False
+
+    async def alive(self) -> bool:
+        """Is the Ollama server answering (cheap, no model is loaded)."""
+        try:
+            await asyncio.wait_for(self.client.ps(), timeout=3)
+            return True
+        except Exception:
             return False
 
     async def unload(self, model: str) -> None:

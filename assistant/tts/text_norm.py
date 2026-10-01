@@ -12,6 +12,7 @@ from functools import lru_cache
 
 from num2words.lang_RU import Num2Word_RU
 
+from assistant.mathtext import to_speech
 from assistant.tts import english
 
 _N = Num2Word_RU()
@@ -30,6 +31,7 @@ _TYPOGRAPHY = str.maketrans({" ": " ", " ": " ", " ": " ", " ": " ", "≈
 
 def clean_for_speech(text: str) -> str:
     """Engine-independent cleanup."""
+    text = to_speech(text)  # "$x^2$" -> "икс в квадрате", not "доллар экс два доллар"
     text = text.translate(_TYPOGRAPHY)
     text = _MD_LINK.sub(r"\1", text)
     text = _URL.sub("", text)
@@ -290,7 +292,8 @@ _RANGE = re.compile(r"(\d)\s*[–—-]\s*(?=\d)")
 _NUM_WORD = re.compile(rf"(?:\b(?P<prep>{_GEN_PREPS})\s+)?(?<![\w,.])({_NUMBER})(?![\w])(?:\s+([а-яёА-ЯЁ]+))?")
 _SYMBOLS = [
     (re.compile(r"°"), " градусов"), (re.compile(r"%"), " процентов"),
-    (re.compile(r"\$"), " долларов"), (re.compile(r"€"), " евро"), (re.compile(r"₽"), " рублей"),
+    # A "$" not next to a number is never read out ("$" left over from a formula is not "долларов").
+    (re.compile(r"(?<=\d)\s*\$|\$(?=\s*\d)"), " долларов"), (re.compile(r"\$"), " "),(re.compile(r"€"), " евро"), (re.compile(r"₽"), " рублей"),
     (re.compile(r"&"), " и "), (re.compile(r"\s[—–-]\s"), ", "), (re.compile(r"/"), " "),
 ]
 _LATIN_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9'’]*(?:-[A-Za-z0-9]+)*")

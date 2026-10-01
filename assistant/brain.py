@@ -28,8 +28,29 @@ BASE_PROMPT = """Ты — {name}, личный ассистент пользов
 Главное — скорость и польза: сразу давай ровно то, что нужно, 1–3 коротких предложения, без вступлений и воды.
 Иногда обращайся к пользователю «{address}», но не в каждой фразе. Говори по-русски, в мужском роде.
 Не называй себя по имени: своё имя из динамиков ты бы услышал как обращение к себе.
-Никакого markdown, списков, эмодзи, ссылок и источников. Если не знаешь — так и скажи.
+В устной части никакого markdown, списков, эмодзи, ссылок, источников и формул в LaTeX (никаких знаков $ и обратных
+косых черт): формулу в устной части говори словами («икс в квадрате»). Если не знаешь — так и скажи.
+{screen}
 Сейчас {now}, {weekday}. Город пользователя по умолчанию: {city}.{facts}"""
+
+# Presentation principle: the screen shows what is better read (formula, code, numbers, names, steps),
+# the voice explains it in other words. The part after ### is never spoken (assistant/assistant.py).
+SCREEN_ADDON = """Если в ответе есть то, что удобнее увидеть, чем услышать — формула, код или команда, числа и даты,
+названия, шаги, сравнение, — после устного ответа поставь отдельную строку ### и под ней 2–6 коротких строк
+для окна на экране: «- Термин — пояснение», «1. шаг», «> формула». Код — одним блоком между строками ```
+с отступами, без пояснений внутри. Устная часть не зачитывает экран, а поясняет его простыми словами, как
+докладчик рядом со слайдом. Для простых ответов и разговора ### не нужен.
+Формулы и на экране пиши обычным текстом с символами Unicode (y = x², √x, π, ≤, →), без LaTeX и знаков $.
+Никогда не рисуй молекулы, графики и схемы символами (|, /, \\, -): картинки показываются отдельно."""
+
+# When a picture (graph, structure, photo) opens next to the answer.
+PICTURE_ADDON = {
+    "plot": "Рядом с ответом уже открыт график этой функции.",
+    "molecule": "Рядом с ответом уже открыта структурная формула этой молекулы.",
+    "photo": "Рядом с ответом уже открыта фотография.",
+}
+PICTURE_TAIL = (" Не описывай, как она нарисована, и не пиши её текстом; на экран — только факты, которых на картинке "
+                "нет (формула, числа, свойства, применение).")
 
 INFO_ADDON = """Если вопрос про факты, новости, цены, курсы, события или что-то свежее — найди в интернете.
 Дай сам ответ сразу, без вступлений вроде «Согласно источникам»."""
@@ -51,6 +72,9 @@ _SMALLTALK = re.compile(
     r"^(как (у тебя )?дела|как ты|как настроение|как жизнь|привет|здравствуй|доброе утро|добрый (день|вечер)|спасибо|"
     r"пока|расскажи (шутку|анекдот|что-нибудь)|ты кто|как тебя зовут|что делаешь|чем занят)"
 )
+# A second action in the same phrase without its verb: "...и другой через две", "...и в Питере", "...и ещё одну".
+_ELLIPSIS = re.compile(r"\s(?:и|а|а потом|потом|затем|а также|плюс)\s+(?:другой|другую|другое|второй|вторую|третий|"
+                       r"еще одн\w*|еще|тоже|также|то же самое|в|во|на|через|для|про)\s")
 CONFIRM_TTL_SEC = 20
 # Commands about other commands: they never become "the last action".
 _META = {"again", "repeat", "stop", "wrong", "undo", "thanks"}
@@ -150,7 +174,7 @@ class Brain:
                       if facts else "")
         return Msg("system", BASE_PROMPT.format(name=cfg.name, address=cfg.address, now=now.strftime("%d.%m.%Y %H:%M"),
                                                 weekday=_WEEKDAYS[now.weekday()], city=cfg.default_city,
-                                                facts=facts_text) + "\n" + addon)
+                                                facts=facts_text, screen=SCREEN_ADDON) + "\n" + addon)
 
     def user_facts(self) -> list[str]:
         memory = next((s for s in self.skills if s.name == "memory"), None)
@@ -257,7 +281,17 @@ class Brain:
                 return await self._run_commands(text, hits)  # type: ignore[arg-type]
 
         fallback: Reply | None = None
+        decision = None
         hit = self.match_skill(text)
+        if _ELLIPSIS.search(norm) and not (hit and hit[1].action.endswith("_many")):
+            # "поставь будильник на 7 и другой на 8", "погода в Москве и в Питере": a module would serve only the
+            # first half. The model splits it into commands; one command or a question -> the usual path.
+            decision = await self.router.route(text, list(self.turns), addressed=addressed)
+            if decision and decision.kind == "commands" and len(decision.commands) > 1:
+                hits = [self.match_skill(c) for c in decision.commands]
+                if all(hits):
+                    log.info("Несколько действий в одной фразе: «%s» → %s", private(norm), decision.commands)
+                    return await self._run_commands(text, hits, "router")  # type: ignore[arg-type]
         if hit:
             reply = await self._run_commands(text, [hit])
             if not reply.fallthrough:
@@ -282,7 +316,8 @@ class Brain:
                 return await self._run_commands(text, hits, "phrasebook")  # type: ignore[arg-type]
             self.router.forget(norm)
 
-        decision = await self.router.route(text, list(self.turns), addressed=addressed)
+        if decision is None:
+            decision = await self.router.route(text, list(self.turns), addressed=addressed)
         if decision and decision.kind == "ignore" and fallback is None:
             if not addressed:
                 log.info("Похоже, это сказано не мне — молчу")
@@ -305,13 +340,15 @@ class Brain:
         else:
             kind, query, fresh = decision.kind, decision.query or text, decision.fresh
         self.last_undo, self.last_route = None, (norm, "answer")
+        shown = self.app.show_visual_for(text)  # "что значит двойная связь": a molecule picture next to the answer
+        picture = shown.kind if shown is not None else ""
         if kind == "web":
             log.info("Маршрут: облако (%s)", private(query))
-            return self._answer_web(text, query, fresh)
+            return self._answer_web(text, query, fresh, picture)
         log.info("Маршрут: локальная модель")
         history = self.app.dialog.messages()
         self.app.dialog.add("user", text)
-        return Reply(stream=self._record(text, self._local_agent(history, text)))
+        return Reply(stream=self._record(text, self._local_agent(history, text, picture)))
 
     # ------------------------------------------------------------------ commands
     async def _run_commands(self, text: str, hits: list[tuple[Skill, Intent]], source: str = "skill") -> Reply:
@@ -358,8 +395,18 @@ class Brain:
         self.turns.append(Turn(text, did))
 
     # ------------------------------------------------------------------ answers
-    def _answer_web(self, text: str, query: str, fresh: bool) -> Reply:
-        key = normalize_command(query)
+    def answer(self, text: str, fresh: bool = False, picture: str = "") -> Reply:
+        """A spoken answer to `text` from the cloud chain (skills that need an explanation, not an action)."""
+        self.last_undo, self.last_route = None, (normalize_command(text), "answer")
+        return self._answer_web(text, text, fresh, picture)
+
+    @staticmethod
+    def _picture_addon(picture: str) -> str:
+        return ("\n" + PICTURE_ADDON[picture] + PICTURE_TAIL) if picture in PICTURE_ADDON else ""
+
+    def _answer_web(self, text: str, query: str, fresh: bool, picture: str = "") -> Reply:
+        # An answer written next to a picture is different (no drawing in text): it has its own cache entry.
+        key = normalize_command(query) + (f" #{picture}" if picture else "")
         cached = self.router.cached_answer(key)
         history = self.app.dialog.messages()
         self.app.dialog.add("user", text)
@@ -370,7 +417,8 @@ class Brain:
             return Reply(stream=self._record(text, _once(cached)))
         # The router already folded the context into `query`; old turns would only cost tokens.
         keep = 0 if query != text else self.app.cfg.llm.cloud_history_turns * 2
-        messages = [self._system(INFO_ADDON), *(history[-keep:] if keep else []), Msg("user", query)]
+        messages = [self._system(INFO_ADDON + self._picture_addon(picture)), *(history[-keep:] if keep else []),
+                    Msg("user", query)]
         # Web search costs ~4k input tokens per question (search results go into the prompt):
         # only fresh data needs it; stable facts the model already knows.
         stream = self.app.llm.stream(self.app.cfg.llm.info_chain, messages, web=fresh)
@@ -393,11 +441,11 @@ class Brain:
             if cache_key and answer and self.app.llm.last_provider in ("groq", "gemini") and answer != FAIL_TEXT:
                 self.router.remember_answer(cache_key, answer, fresh)
 
-    async def _local_agent(self, history: list[Msg], text: str) -> AsyncIterator[str]:
+    async def _local_agent(self, history: list[Msg], text: str, picture: str = "") -> AsyncIterator[str]:
         """Local model with tool calling. Direct tools answer the user themselves."""
         local = self.app.llm.local
         self.app.llm.last_provider = "local"
-        messages = [self._system(LOCAL_ADDON), *history, Msg("user", text)]
+        messages = [self._system(LOCAL_ADDON + self._picture_addon(picture)), *history, Msg("user", text)]
         schemas = [tool.schema() for _, tool in self.tools.values()]
         for _round in range(3):
             turn = LocalTurn()

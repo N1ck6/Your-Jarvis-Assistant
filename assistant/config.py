@@ -22,7 +22,7 @@ class AssistantCfg(BaseModel):
     address: str = "сэр"
     language: str = "ru"
     default_city: str = "Москва"
-    hot_window_sec: float = 5.0
+    hot_window_sec: float = 8.0
     dialog_ttl_sec: float = 180
     dialog_max_turns: int = 6
 

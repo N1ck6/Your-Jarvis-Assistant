@@ -53,6 +53,13 @@ class UiPort(Protocol):
     def show_card(self, index: int) -> None: ...
     def close_deck(self) -> None: ...
     def open_url(self, url: str) -> None: ...
+    def open_settings(self, url: str) -> None:
+        """The settings page in a window of its own (not a browser tab)."""
+        ...
+    def show_visual(self, visual) -> None:
+        """A picture next to the cards (assistant.visuals.Visual)."""
+        ...
+    def close_visual(self) -> None: ...
     def chat_add(self, role: str, text: str) -> None:
         """A line for the chat window history: role "user" or "assistant"."""
         ...
@@ -92,6 +99,17 @@ class ConsoleUi:
         import webbrowser
 
         webbrowser.open(url)
+
+    def open_settings(self, url: str) -> None:
+        self.open_url(url)
+
+    def show_visual(self, visual) -> None:
+        from assistant.log import private
+
+        log.info("КАРТИНКА «%s»", private(visual.title))
+
+    def close_visual(self) -> None:
+        pass
 
     def chat_add(self, role: str, text: str) -> None:
         pass

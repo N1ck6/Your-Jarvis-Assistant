@@ -51,6 +51,67 @@ def answer_card_text(text: str) -> str:
     return "\n".join(" ".join(sentences[i:i + 2]) for i in range(0, len(sentences), 2))
 
 
+_ASK_PREFIX = re.compile(
+    r"^(?:(?:а|ну|слушай|скажи-ка|пожалуйста|будь добр)[,\s]+)*"
+    r"(?:(?:покажи|расскажи|объясни|скажи|подскажи|напиши|выведи|опиши|нарисуй|построй|найди|дай)(?:\s+мне)?[,\s]+"
+    r"(?:(?:про|о|об)\s+)?)?",
+    re.I)
+
+
+def card_title(query: str) -> str:
+    """The card header: the subject, not the request as said ("покажи мне график x квадрат- 3 x" -> "График y = x² − 3x")."""
+    if not query:
+        return "Ответ"
+    from assistant import visuals
+
+    formula = visuals.spoken_formula(query) if re.search(r"график", query, re.I) else None
+    if formula:
+        return f"График y = {visuals.pretty(formula)}"
+    text = _ASK_PREFIX.sub("", query.strip()).strip(" ,?.!") or query.strip(" ?.!")
+    text = text[:1].upper() + text[1:]
+    return text if len(text) <= 70 else text[:67].rsplit(" ", 1)[0] + "…"
+
+
+# The answer's screen part starts here (brain.SCREEN_ADDON): "###" or a line "ЭКРАН:".
+_NOTES = re.compile(r"#{3,}|^[ \t]*(?:ЭКРАН|Экран|НА ЭКРАНЕ)\s*:", re.M)
+_NOTES_PREFIXES = ("ЭКРАН:", "НА ЭКРАНЕ:")
+
+
+def _maybe_marker_start(tail: str) -> bool:
+    """The end of the text so far could be the beginning of the notes marker: hold it back from the voice."""
+    if tail.endswith("#"):
+        return True
+    line = tail.rsplit("\n", 1)[-1].strip().upper()
+    return bool(line) and any(p.startswith(line) for p in _NOTES_PREFIXES)
+
+
+async def split_notes(stream, notes: list[str]):
+    """Yields the spoken part of an answer stream; the screen part after the marker goes to `notes`."""
+    buf = ""
+    async for delta in stream:
+        if notes:
+            notes.append(delta)
+            continue
+        buf += delta
+        m = _NOTES.search(buf)
+        if m:
+            if buf[:m.start()].strip():
+                yield buf[:m.start()]
+            notes.append(buf[m.end():])
+            buf = ""
+            continue
+        if _maybe_marker_start(buf):
+            cut = len(buf.rstrip("#")) if buf.endswith("#") else buf.rfind("\n") + 1
+            if cut > 0:
+                yield buf[:cut]
+                buf = buf[cut:]
+            continue
+        yield buf
+        buf = ""
+    if buf and not notes:
+        yield buf
+
+
 class Assistant:
     def __init__(self, cfg: Settings, ui: UiPort, *, use_mic: bool = True) -> None:
         self.cfg = cfg
@@ -166,6 +227,20 @@ class Assistant:
             await self.llm.local.warmup(self.cfg.router.model)
         if self.state is State.IDLE:
             self.ui.set_state(State.IDLE)
+        asyncio.create_task(self._watch_local())
+
+    async def _watch_local(self) -> None:
+        """Ollama closed or restarted: the router and answers switch to the cloud and back by themselves."""
+        local = self.llm.local
+        while True:
+            await asyncio.sleep(30)
+            alive = await local.alive()
+            if alive and not local.healthy:
+                if await local.warmup():
+                    log.info("Ollama снова доступна: локальная модель вернулась")
+            elif not alive and local.healthy:
+                local.healthy = False
+                log.warning("Ollama не отвечает: маршрутизатор и ответы идут через облако, пока она не вернётся")
 
     async def _fetch_packs(self) -> None:
         """Recorded Jarvis reactions missing (a fresh installed build): download them in the background."""
@@ -531,6 +606,10 @@ class Assistant:
         log.info("Распознано за %.0f мс: «%s» (уверенность %.2f, речь %.1f с)", (time.perf_counter() - t) * 1000,
                  private(text), res.confidence, utt.voiced_sec)
         wake = self.cfg.wake
+        if utt.source in ("hot", "await") and self._only_name(text):
+            # "Джарвис" again after an answer (to ask something else): the window starts over, nothing is lost.
+            self._rearm_window()
+            return
         if utt.source == "hot" and self._not_for_me(utt, res):
             self._set_state(State.IDLE)
             return
@@ -561,6 +640,19 @@ class Assistant:
                 self._set_state(State.IDLE)
             return
         await self.handle_text(query, addressed=utt.source != "hot")
+
+    def _only_name(self, text: str) -> bool:
+        phrases = self.cfg.wake.phrases
+        return bool(text) and find_wake(text, phrases, 90) is not None and len(strip_wake(text, phrases, 90)) < 2
+
+    def _rearm_window(self) -> None:
+        if not self.listener:
+            return
+        seconds = max(self.cfg.assistant.hot_window_sec, self.cfg.audio.await_command_sec)
+        self._earcon(earcons.WAKE)
+        self.listener.to_await(seconds, "await", resume=True)
+        self._set_state(State.LISTENING, "слушаю")
+        log.info("Имя в горячем окне: слушаю заново %.0f с", seconds)
 
     async def _is_owner(self, audio) -> bool:
         """Owner-only mode: someone else's "Джарвис" (TV, guests) is ignored."""
@@ -649,21 +741,20 @@ class Assistant:
             return reply.listen_after
         text = ""
         shown = False
+        title = card_title(query)
 
-        def show_card(answer: str) -> None:
-            """Long answers also go to the card window, as soon as the whole text is known."""
+        def show_card(screen: str) -> None:
             nonlocal shown
-            if not shown and answer and not answer.startswith("[") and len(answer) > self.cfg.ui.card_threshold_chars:
+            if not shown and screen.strip():
                 shown = True
-                title = (query[:1].upper() + query[1:]).rstrip("?.!")[:70] if query else "Ответ"
-                self.ui.show_deck(Deck(title=title, cards=[Card("", answer_card_text(answer), "")], done=True))
+                self.ui.show_deck(Deck(title=title, cards=[Card("", screen.strip(), "")], done=True))
 
+        notes: list[str] = []
         use_reaction = reply.reaction and (reply.reaction != "ok" or self.cfg.voice.ok_for_actions)
         if use_reaction and await self.react(reply.reaction):
             text = f"[{reply.reaction}] {reply.speech}".strip()
         elif reply.stream is not None:
             first = True
-            parts: list[str] = []
 
             async def timed():
                 nonlocal first
@@ -672,18 +763,45 @@ class Assistant:
                         first = False
                         log.info("Первый токен через %.2f с (%s)", time.perf_counter() - started,
                                  self.llm.last_provider or "-")
-                    parts.append(delta)
                     yield delta
-                show_card("".join(parts).strip())  # the model is done long before the voice is
+                # The model is done long before the voice is: the screen part shows while the voice explains.
+                show_card("".join(notes))
 
-            text = await self.speaker.speak(timed())
+            # Presentation, not dictation: the card holds what is better read (formulas, numbers, steps),
+            # the voice explains it; the spoken text itself is not put on screen.
+            text = await self.speaker.speak(split_notes(timed(), notes))
+            if not shown and text:
+                self.ui.close_deck()  # the card of the previous answer is not about this one
         elif reply.speech:
             text = await self.speaker.say(reply.speech)
-        show_card(text)
-        log.info("Ответ за %.2f с: %s", time.perf_counter() - started, private(text[:200]))
+            if not text.startswith("[") and len(text) > self.cfg.ui.card_threshold_chars:
+                show_card(answer_card_text(text))  # a long list from a module (no model to summarize it)
+        screen = "".join(notes).strip()
+        log.info("Ответ за %.2f с: %s%s", time.perf_counter() - started, private(text[:200]),
+                 " (+ экран)" if screen else "")
         if text:
-            self.ui.chat_add("assistant", text)
+            self.ui.chat_add("assistant", text + (f"\n\n{screen}" if screen else ""))
         return reply.listen_after or reply.confirm is not None
+
+    def show_visual_for(self, text: str):
+        """A picture next to the answer when seeing beats hearing (graph, molecule, photo); fetched in the background.
+        Returns what is being fetched (visuals.Request) or None: the answer's prompt then knows a picture is shown."""
+        from assistant import visuals
+
+        req = visuals.detect(text)
+        if req is None:
+            self.ui.close_visual()  # a new question: the previous topic's picture goes away
+            return None
+
+        async def run() -> None:
+            t = time.perf_counter()
+            visual = await visuals.fetch(req, self)
+            if visual is not None:
+                log.info("Картинка «%s» (%s) за %.1f с", private(visual.title), req.kind, time.perf_counter() - t)
+                self.ui.show_visual(visual)
+
+        asyncio.create_task(run())
+        return req
 
     def _after_answer(self, listen_after: bool, expect_answer: bool = False) -> None:
         if self.listener and (listen_after or expect_answer) and self.mic and not self.mic.paused:

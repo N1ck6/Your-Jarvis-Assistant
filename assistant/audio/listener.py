@@ -108,13 +108,21 @@ class ListenerCore:
             self.mode = Mode.WAIT
             self._reset_segment()
 
-    def to_await(self, seconds: float, source: str = "await") -> None:
+    def to_await(self, seconds: float, source: str = "await", resume: bool = False) -> None:
+        """resume=True: Jarvis is silent and the user may already be speaking again (the request after "Джарвис"
+        in the hot window): speech in progress becomes the start of the command instead of being lost."""
         with self._lock:
+            if resume and self.mode is Mode.WAIT and self._in_speech and self._segment:
+                segment = list(self._segment)
+                self._reset_segment()
+                self._start_capture(segment, source)
+                return
             self.mode = Mode.AWAIT
             self._await_source = source
             self._await_deadline = time.monotonic() + seconds
             self._await_voiced = 0
-            self.pre_roll.clear()  # it may hold Jarvis's own voice from the speakers
+            if not resume:
+                self.pre_roll.clear()  # it may hold Jarvis's own voice from the speakers
 
     def start_dictation(self, until_pause: bool) -> None:
         """until_pause=False: record until stop_dictation() (hotkey held); True: stop after a pause (voice)."""
@@ -215,6 +223,9 @@ class ListenerCore:
             self._capture_silence += 1
         question_started = self._capture_after >= self.question_frames
         limit = self.end_frames if question_started else self.grace_frames
+        if self._capture_source == "hot" and self._capture_voiced * self.frame_sec < 0.9:
+            # "Джарвис…" and a pause in the hot window: the request follows the name, wait for it as after a wake.
+            limit = self.grace_frames
         if self._capture_silence >= limit or len(self._capture) >= self.max_frames:
             audio = np.concatenate(self._capture).astype(np.float32) / 32768.0
             utt = Utterance(audio, self._capture_source, self._capture_voiced * self.frame_sec, self._capture_barge)

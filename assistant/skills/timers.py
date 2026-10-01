@@ -29,6 +29,7 @@ _LIST = re.compile(
     rf"\b(какие|какой|сколько|список|покажи|покажите|мои|есть ли|что с|что по|проверь|статус|скажи|назови|перечисли|активные|напомни какие)\b.*\b{_NOUN}"
     rf"|^{_NOUN}( есть| какие| остались| активные)?$|^сколько (еще |еще времени |времени )?осталось"
     rf"|\bкогда (сработает|зазвенит|будет|прозвенит|закончится)\b"
+    r"(?!.*\b(дожд|снег|гроз|ливен|ливн|осадк|морос|потепле|похолода|тепл|холод|мороз|солнц|жар|урок|пар|матч|игр|фильм))"
 )
 _SET = re.compile(
     r"(таймер|напомни|напомнить|напоминай|напоминани|напоминалк|разбуди|засеки|засечь|будильник|отсчет|отсчитай|"
@@ -40,6 +41,14 @@ _LABEL_CLEAN = re.compile(
     r"будильник|разбуди|скажи|сообщи|предупреди|дай знать|позови|крикни|маякни|мне|через|на|о том что|об этом|что|"
     r"чтобы|про|о|об|надо|нужно)\b",
 )
+_DURATIONS = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:час\w*|минут\w*|мин|секунд\w*|сек)\b|\b(?:час|минуту|секунду)\b")
+# Several timers in one phrase: a separate one starts with "другой", "ещё один", "через", "на"...
+_MARK = r"(?:другой|второй|третий|еще один|еще|таймер\w*|напомни|через|на)\b"
+_SPLIT_MARKED = re.compile(rf"\s+(?:и|а|а также|и еще|а еще|плюс|потом|затем)\s+(?={_MARK})")
+_SPLIT_ANY = re.compile(r"\s+(?:и|а|а также|и еще|а еще|плюс|потом|затем)\s+|\s*,\s*")
+_SEVERAL = re.compile(r"\b(таймеры|два таймера|три таймера|2 таймера|3 таймера|несколько таймеров|напоминания)\b")
+_UNIT = re.compile(r"\b(час(?:а|ов)?|минут(?:у|ы)?|секунд(?:у|ы)?)\b")
+_EXTRA = re.compile(r"\b(другой|второй|третий|еще один|еще|один|таймеры|таймера|два|три)\b")
 _ALL = re.compile(r"\b(все|всё|оба|обе|таймеры|напоминания|будильники)\b")
 _LAST = re.compile(r"\b(последний|последнее|этот|текущий)\b")
 
@@ -115,12 +124,40 @@ class TimersSkill(Skill):
                 label = self._label(rest) if not alarm else ""
                 return Intent(self.name, "set_at", {"due": when.at.timestamp(), "repeat": when.repeat,
                                                     "alarm": alarm, "label": label}, text)
+        many = self._many(text)
+        if many:
+            return Intent(self.name, "set_many", {"items": many}, text)
         parsed = parse_duration(text)
         if parsed:
             seconds, span = parsed
-            label = self._label(text.replace(span, " "))
+            rest = text.replace(span, " ") if span in text else _DURATIONS.sub(" ", text)  # "1 час и 20 минут"
+            label = self._label(rest)
             return Intent(self.name, "set", {"seconds": seconds, "label": label}, text)
         return None
+
+    def _many(self, text: str) -> list[list] | None:
+        """"таймер через минуту и другой через две", "таймеры на 5 и 10 минут", "напомни через 10 минут позвонить и
+        через час выключить плиту" -> [[seconds, label], ...]. "на 1 час и 20 минут" stays one timer."""
+        plural_noun = bool(_SEVERAL.search(text))
+        parts = (_SPLIT_ANY if plural_noun else _SPLIT_MARKED).split(text)
+        if len(parts) < 2:
+            return None
+        units = [_UNIT.findall(p) for p in parts]
+        items: list[list] = []
+        for i, part in enumerate(parts):
+            parsed = parse_duration(part)
+            if parsed is None and re.search(r"\d", part):
+                # "...через минуту и другой через 2": the unit comes from a neighbour.
+                borrowed = next((u[-1] for u in reversed(units[:i]) if u), None) or \
+                    next((u[0] for u in units[i + 1:] if u), None)
+                parsed = parse_duration(f"{part} {borrowed}") if borrowed else None
+                if parsed:
+                    parsed = (parsed[0], re.search(r"\d+(?:[.,]\d+)?", part).group(0))
+            if parsed is None:
+                return None
+            seconds, span = parsed
+            items.append([seconds, self._label(re.sub(_EXTRA, " ", part.replace(span, " ")))])
+        return items
 
     @staticmethod
     def _label(rest: str) -> str:
@@ -128,7 +165,8 @@ class TimersSkill(Skill):
                       r"каждый|каждую|каждое|по будням|по выходным)\b", " ", rest)
         rest = _LABEL_CLEAN.sub(" ", rest)
         rest = re.sub(r"\b\d+\b", " ", rest)
-        return re.sub(r"\s+", " ", rest).strip(" ,.")
+        rest = re.sub(r"\s+", " ", rest).strip(" ,.")
+        return re.sub(r"^(и|а)\b\s*|\s*\b(и|а)$", "", rest).strip()
 
     def tools(self) -> list[Tool]:
         return [
@@ -165,6 +203,22 @@ class TimersSkill(Skill):
                 return Reply(f"Хорошо, через {say_duration(seconds)} напомню: {label}.", tool_result="таймер поставлен",
                              undo=undo)
             return Reply(f"Поставил таймер на {say_duration(seconds)}.", tool_result="таймер поставлен", undo=undo)
+        if intent.action == "set_many":
+            made: list[Timer] = []
+            for seconds, label in intent.slots["items"]:
+                label = _keep_case(str(label).strip(), intent.raw)
+                timer = Timer(uuid.uuid4().hex[:8], time.time() + int(seconds), label[:1].lower() + label[1:], time.time())
+                self._add(timer)
+                made.append(timer)
+            said = [f"через {say_duration(int(t.due - t.created))}" + (f" — {t.label}" if t.label else "") for t in made]
+            n = len(made)
+
+            async def undo() -> Reply:
+                for t in made:
+                    self._remove(t.id)
+                return Reply("Таймеры убрал.")
+            return Reply(f"Поставил {n} {plural(n, 'таймер', 'таймера', 'таймеров')}: " + ", ".join(said) + ".",
+                         tool_result="таймеры поставлены", undo=undo)
         if intent.action == "set_at":
             label = _keep_case(str(intent.slots.get("label") or ""), intent.raw)
             return self._set_at(float(intent.slots["due"]), label, str(intent.slots.get("repeat") or ""),

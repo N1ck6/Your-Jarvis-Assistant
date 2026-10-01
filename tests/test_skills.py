@@ -35,6 +35,9 @@ class FakeApp:
     async def announce(self, text, cue=None):
         self.announced.append(text)
 
+    def show_visual_for(self, text):
+        self.visual_asked = text
+
 
 @pytest.fixture(scope="module")
 def app():

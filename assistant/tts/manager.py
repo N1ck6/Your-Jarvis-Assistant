@@ -13,7 +13,10 @@ log = logging.getLogger("tts")
 
 
 class TtsManager:
-    def __init__(self, voice_id: str, rate: float = 1.0, fallback_id: str = "silero:eugene") -> None:
+    def __init__(self, voice_id: str, rate: float = 1.0, fallback_id: str = "silero:eugene", clone_nfe: int = 16) -> None:
+        from assistant.tts.engines import CloneEngine
+
+        CloneEngine.nfe_step = clone_nfe
         self._engines: dict[str, TtsEngine] = {}
         self._lock = threading.Lock()
         self.rate = rate

@@ -27,6 +27,11 @@ _FORGET = re.compile(r"^(забудь|забыть|удали из памяти|
 class MemorySkill(Skill):
     name = "memory"
     title = "Память о пользователе"
+    examples = [
+        'запомни что <факт>',
+        'что ты обо мне знаешь',
+        'забудь что <факт>',
+    ]
 
     def __init__(self) -> None:
         self._facts: list[dict] = []

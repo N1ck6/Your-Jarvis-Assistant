@@ -89,6 +89,35 @@ class VoicePack:
         return self.pick(f"greet_{part}") or self.pick("greet")
 
 
+# Clean clips (with exact transcripts) that make a ~7 s reference for voice cloning. Shorter = faster synthesis.
+CLONE_REFS: dict[str, list[tuple[str, str]]] = {
+    "jarvis-og": [("reply1", "Да, сэр."), ("ok3", "Запрос выполнен, сэр."),
+                  ("not_found", "Чего вы пытаетесь добиться, сэр?"), ("thanks", "Всегда к вашим услугам, сэр.")],
+    "jarvis-remaster": [("greet_day", "Добрый день, сэр. Чем я могу вам сегодня помочь?"),
+                        ("stupid", "Очень тонкое замечание, сэр."), ("thanks", "Всегда к вашим услугам, сэр.")],
+    "jarvis-howdy": [("run", "Добрый день, сэр."), ("ready", "Мы подключены и готовы."),
+                     ("not_found", "Чего вы пытаетесь добиться, сэр?"), ("thanks", "Всегда к вашим услугам, сэр.")],
+}
+
+
+def clone_reference(pack_id: str, sr: int = 24000) -> tuple[np.ndarray, str]:
+    """Concatenated reference audio (float32 mono at `sr`) and its transcript."""
+    folder = PACKS_DIR / pack_id / "ru"
+    parts: list[np.ndarray] = []
+    texts: list[str] = []
+    gap = np.zeros(int(sr * 0.3), dtype=np.float32)
+    for stem, text in CLONE_REFS[pack_id]:
+        path = next(folder.glob(stem + ".*"), None)
+        if path is None:
+            continue
+        d = miniaudio.decode_file(str(path), output_format=miniaudio.SampleFormat.FLOAT32, nchannels=1, sample_rate=sr)
+        parts += [np.frombuffer(d.samples, dtype=np.float32), gap]
+        texts.append(text)
+    if not parts:
+        raise FileNotFoundError(f"Нет реплик пакета {pack_id} для клонирования")
+    return np.concatenate(parts), " ".join(texts)
+
+
 def load_pack(pack_id: str) -> VoicePack | None:
     if not pack_id or pack_id == "none":
         return None

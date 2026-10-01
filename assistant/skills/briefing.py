@@ -10,7 +10,7 @@ import logging
 import re
 
 from assistant.core import Card, Deck
-from assistant.nlu import plural
+from assistant.nlu import plural, sleep_until
 from assistant.skills.base import Intent, Reply, Skill
 
 log = logging.getLogger("briefing")
@@ -34,6 +34,9 @@ def _greeting(address: str) -> str:
 class BriefingSkill(Skill):
     name = "briefing"
     title = "Утренняя сводка"
+    examples = [
+        'доброе утро (сводка дня)',
+    ]
 
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
@@ -109,7 +112,7 @@ class BriefingSkill(Skill):
             target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
             if target <= now:
                 target += dt.timedelta(days=1)
-            await asyncio.sleep((target - now).total_seconds())
+            await sleep_until(target.timestamp(), step=60)
             text, _ = await self.compose()
             await self.app.announce(text)
 

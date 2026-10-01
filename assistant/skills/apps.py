@@ -34,6 +34,9 @@ _NOT_APPS = {"музыку", "свет", "микрофон", "звук", "тай
 class AppsSkill(Skill):
     name = "apps"
     title = "Запуск приложений и сайтов"
+    examples = [
+        'открой <приложение или сайт>',
+    ]
 
     def __init__(self) -> None:
         self.index: dict[str, str] = {}   # lowercase name -> launch target
@@ -108,7 +111,8 @@ class AppsSkill(Skill):
             return Reply("Что открыть?")
         found = self.resolve(name)
         if not found:
-            return Reply(f"Не нашёл «{name}» среди приложений.", tool_result=f"Приложение {name} не найдено")
+            return Reply(f"Не нашёл «{name}» среди приложений.", tool_result=f"Приложение {name} не найдено",
+                         fallthrough=True)
         title, target = found
         try:
             await run_blocking(_launch, target)

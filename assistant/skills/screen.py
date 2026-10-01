@@ -32,6 +32,9 @@ PROMPT = """Пользователь сам выделил эту область
 class ScreenSkill(Skill):
     name = "screen"
     title = "Помощь с экраном"
+    examples = [
+        'что на экране',
+    ]
 
     def match(self, text: str) -> Intent | None:
         if _TRIGGER.search(text):

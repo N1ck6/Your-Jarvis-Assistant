@@ -49,6 +49,11 @@ def _range(lo: float, hi: float) -> str:
 class WeatherSkill(Skill):
     name = "weather"
     title = "Погода"
+    examples = [
+        'какая погода',
+        'погода в <город>',
+        'погода завтра в <город>',
+    ]
 
     def __init__(self) -> None:
         self._geo_cache: dict[str, tuple[float, float, str]] = {}
@@ -68,6 +73,26 @@ class WeatherSkill(Skill):
                 words.append(w)
             city = " ".join(words)
         return Intent(self.name, "forecast", {"city": city, "day": day}, text)
+
+    def followup(self, text: str, last: Intent) -> Intent | None:
+        """"а завтра?", "а послезавтра", "а в Сочи?", "а в Казани завтра" after a weather answer."""
+        words = text.split()
+        days = [_DAY_WORDS[w] for w in words if w in _DAY_WORDS]
+        m = _CITY.search(text)
+        city = ""
+        if m:
+            city = " ".join(w for w in m.group("city").split() if w not in _STOP_AFTER_CITY)
+        rest = [w for w in words if w not in _DAY_WORDS and w not in ("а", "и", "там", "как", "что", "насчет", "по", "погода")]
+        if city:
+            rest = [w for w in rest if w not in ("в", "во") and w not in city.split()]
+        if not (days or city) or rest:
+            return None
+        slots = dict(last.slots)
+        if days:
+            slots["day"] = days[0]
+        if city:
+            slots["city"] = city
+        return Intent(self.name, "forecast", slots)
 
     def tools(self) -> list[Tool]:
         return [Tool("get_weather", "Погода и прогноз для города.",

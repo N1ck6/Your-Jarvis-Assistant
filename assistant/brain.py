@@ -9,8 +9,10 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, AsyncIterator
 
+from assistant.llm.hub import FAIL_TEXT
 from assistant.llm.providers import LocalTurn, Msg
-from assistant.nlu import NO, YES, normalize_command
+from assistant.nlu import NO, YES, normalize_command, split_compound
+from assistant.router import Router, Turn
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
 if TYPE_CHECKING:
@@ -24,6 +26,7 @@ BASE_PROMPT = """Ты — {name}, личный ассистент пользов
 собранный, точный, спокойный, с лёгкой сухой иронией, всегда на стороне хозяина. Ответы озвучиваются голосом.
 Главное — скорость и польза: сразу давай ровно то, что нужно, 1–3 коротких предложения, без вступлений и воды.
 Иногда обращайся к пользователю «{address}», но не в каждой фразе. Говори по-русски, в мужском роде.
+Не называй себя по имени: своё имя из динамиков ты бы услышал как обращение к себе.
 Никакого markdown, списков, эмодзи, ссылок и источников. Если не знаешь — так и скажи.
 Сейчас {now}, {weekday}. Город пользователя по умолчанию: {city}.{facts}"""
 
@@ -51,6 +54,10 @@ CONFIRM_TTL_SEC = 20
 ASK_INTERNET = Tool("ask_internet", "Найти свежую информацию в интернете и ответить на фактический вопрос.",
                     {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]},
                     "ask")
+
+
+async def _once(text: str) -> AsyncIterator[str]:
+    yield text
 
 
 class Dialog:
@@ -102,6 +109,12 @@ class Brain:
         self._turn_used_tools = False
         # A dangerous action waiting for "да": (callback, deadline).
         self.pending: tuple | None = None
+        # Last few requests and what was done: context for the router and "ещё раз".
+        self.turns: deque[Turn] = deque(maxlen=6)
+        self.last_command: tuple[Skill, Intent] | None = None
+        # Replies of a compound command that must be spoken after the main one.
+        self.extra: list[Reply] = []
+        self.router = Router(app)
         self.tools: dict[str, tuple[Skill | None, Tool]] = {ASK_INTERNET.name: (None, ASK_INTERNET)}
         for skill in skills:
             for tool in skill.tools():
@@ -155,32 +168,132 @@ class Brain:
             return Reply("Отменил.", listen_after=False)
         return None
 
+    # ------------------------------------------------------------------ main entry
     async def handle(self, text: str) -> Reply:
-        """Returns a Reply; streaming replies must be spoken by the caller."""
+        """regex modules -> compound split -> learned phrases -> model router -> answer. Streams are spoken by the caller."""
         confirmed = await self._resolve_pending(text)
         if confirmed is not None:
+            self._note(text, confirmed.speech or "подтверждено")
             return confirmed
+        norm = normalize_command(text)
+
+        # Compound first: otherwise "закрой браузер и включи музыку" becomes one "закрой <...>".
+        parts = split_compound(norm)
+        if len(parts) > 1:
+            hits = [self.match_skill(p) for p in parts]
+            if all(hits):
+                log.info("Составная команда: %s", parts)
+                return await self._run_commands(text, hits)  # type: ignore[arg-type]
+
+        fallback: Reply | None = None
         hit = self.match_skill(text)
         if hit:
-            skill, intent = hit
-            log.info("Модуль %s.%s %s", skill.name, intent.action, intent.slots or "")
-            self.app.dialog.add("user", text, action=True)
-            reply = await skill.handle(intent)
-            self._remember_confirm(reply)
-            if reply.speech:
-                self.app.dialog.add("assistant", reply.speech, action=True)
-            return reply
+            reply = await self._run_commands(text, [hit])
+            if not reply.fallthrough:
+                return reply
+            log.info("Модуль %s не справился, спрашиваю маршрутизатор", hit[0].name)
+            fallback = reply
 
+        # Short follow-ups to the previous command ("а завтра?", "а в Сочи?") are resolved by its own skill.
+        if self.last_command is not None and len(norm.split()) <= 5:
+            skill, last = self.last_command
+            follow = skill.followup(norm, last)
+            if follow is not None:
+                follow.text, follow.raw = norm, text
+                log.info("Уточнение к %s.%s: %s", skill.name, follow.action, follow.slots)
+                return await self._run_commands(text, [(skill, follow)])
+
+        learned = self.router.learned(norm)
+        if learned:
+            hits = [self.match_skill(c) for c in learned]
+            if all(hits):
+                log.info("Выученная формулировка → %s", learned)
+                return await self._run_commands(text, hits)  # type: ignore[arg-type]
+            self.router.forget(norm)
+
+        decision = await self.router.route(text, list(self.turns))
+        if decision and decision.kind == "commands":
+            hits = [self.match_skill(c) for c in decision.commands]
+            if all(hits):
+                log.info("Маршрутизатор: «%s» → %s", norm, decision.commands)
+                if not decision.context:
+                    self.router.learn(norm, decision.commands)
+                return await self._run_commands(text, hits)  # type: ignore[arg-type]
+            log.info("Маршрутизатор предложил неизвестные команды %s, отвечаю как на вопрос", decision.commands)
+            decision = None
+        if fallback is not None:
+            return fallback
+
+        if decision is None:
+            kind, query, fresh = ("web" if is_info_question(text) else "chat"), text, True
+        else:
+            kind, query, fresh = decision.kind, decision.query or text, decision.fresh
+        if kind == "web":
+            log.info("Маршрут: облако (%s)", query)
+            return self._answer_web(text, query, fresh)
+        log.info("Маршрут: локальная модель")
         history = self.app.dialog.messages()
         self.app.dialog.add("user", text)
-        if is_info_question(text):
-            log.info("Маршрут: облако (вопрос с фактами)")
-            messages = [self._system(INFO_ADDON), *history, Msg("user", text)]
-            return Reply(stream=self._record(self.app.llm.stream(self.app.cfg.llm.info_chain, messages, web=True)))
-        log.info("Маршрут: локальная модель")
-        return Reply(stream=self._record(self._local_agent(history, text)))
+        return Reply(stream=self._record(text, self._local_agent(history, text)))
 
-    async def _record(self, stream: AsyncIterator[str]) -> AsyncIterator[str]:
+    # ------------------------------------------------------------------ commands
+    async def _run_commands(self, text: str, hits: list[tuple[Skill, Intent]]) -> Reply:
+        replies: list[Reply] = []
+        for skill, intent in hits:
+            log.info("Модуль %s.%s %s", skill.name, intent.action, intent.slots or "")
+            reply = await skill.handle(intent)
+            self._remember_confirm(reply)
+            replies.append(reply)
+            if not (skill.name == "system" and intent.action in ("again", "repeat", "stop")):
+                self.last_command = (skill, intent)
+        self.app.dialog.add("user", text, action=True)
+        said = " ".join(r.speech for r in replies if r.speech)
+        if said:
+            self.app.dialog.add("assistant", said, action=True)
+        done = ", ".join(i.text for _, i in hits)
+        self._note(text, f"выполнено «{done}»" + (f": {said[:90]}" if said else ""))
+        if len(replies) == 1:
+            return replies[0]
+        # Several commands: all actions are done; speak the informative parts, streams follow.
+        self.extra.extend(r for r in replies if r.stream is not None or r.spoken)
+        speech = " ".join(r.speech for r in replies if r.speech and not r.reaction and r.stream is None and not r.spoken)
+        return Reply(speech=speech, reaction="" if speech else ("ok" if any(r.reaction for r in replies) else ""),
+                     listen_after=any(r.listen_after for r in replies),
+                     confirm=next((r.confirm for r in replies if r.confirm), None))
+
+    async def redo(self) -> Reply:
+        """Ещё раз: repeat the last command; if there was none, repeat the last answer."""
+        if self.last_command is not None:
+            skill, intent = self.last_command
+            log.info("Ещё раз: %s.%s", skill.name, intent.action)
+            reply = await skill.handle(intent)
+            self._remember_confirm(reply)
+            return reply
+        return Reply(self.app.speaker.last_text or "Пока нечего повторять.")
+
+    def _note(self, text: str, did: str) -> None:
+        self.turns.append(Turn(text, did))
+
+    # ------------------------------------------------------------------ answers
+    def _answer_web(self, text: str, query: str, fresh: bool) -> Reply:
+        key = normalize_command(query)
+        cached = self.router.cached_answer(key)
+        history = self.app.dialog.messages()
+        self.app.dialog.add("user", text)
+        if cached:
+            log.info("Ответ из кэша (облако не тратится)")
+            self.app.llm.last_provider = "кэш"
+            return Reply(stream=self._record(text, _once(cached)))
+        # The router already folded the context into `query`; old turns would only cost tokens.
+        keep = 0 if query != text else self.app.cfg.llm.cloud_history_turns * 2
+        messages = [self._system(INFO_ADDON), *(history[-keep:] if keep else []), Msg("user", query)]
+        # Web search costs ~4k input tokens per question (search results go into the prompt):
+        # only fresh data needs it; stable facts the model already knows.
+        stream = self.app.llm.stream(self.app.cfg.llm.info_chain, messages, web=fresh)
+        return Reply(stream=self._record(text, stream, cache_key=key, fresh=fresh))
+
+    async def _record(self, text: str, stream: AsyncIterator[str], cache_key: str = "",
+                      fresh: bool = True) -> AsyncIterator[str]:
         parts: list[str] = []
         self._turn_used_tools = False
         try:
@@ -188,9 +301,13 @@ class Brain:
                 parts.append(delta)
                 yield delta
         finally:
+            answer = "".join(parts).strip()
             if self._turn_used_tools:
                 self.app.dialog.mark_last_user_action()
-            self.app.dialog.add("assistant", "".join(parts).strip(), action=self._turn_used_tools)
+            self.app.dialog.add("assistant", answer, action=self._turn_used_tools)
+            self._note(text, f"ответил: {answer[:100]}")
+            if cache_key and answer and self.app.llm.last_provider in ("groq", "gemini") and answer != FAIL_TEXT:
+                self.router.remember_answer(cache_key, answer, fresh)
 
     async def _local_agent(self, history: list[Msg], text: str) -> AsyncIterator[str]:
         """Local model with tool calling. Direct tools answer the user themselves."""
@@ -205,7 +322,9 @@ class Brain:
                     yield delta
             except Exception as exc:
                 log.warning("Локальная модель: %s", exc)
-                async for delta in self.app.llm.stream(self.app.cfg.llm.info_chain, messages, web=False):
+                # Cloud fallback gets only the conversation, never tool results (file contents, cmd output).
+                safe = [self._system(""), *history, Msg("user", text)]
+                async for delta in self.app.llm.stream(self.app.cfg.llm.info_chain, safe, web=False):
                     yield delta
                 return
             if not turn.tool_calls:
@@ -243,7 +362,7 @@ class Brain:
                 intent.raw = text
                 reply = await skill.handle(intent)
                 self._remember_confirm(reply)
-                if reply.speech:
+                if reply.speech and tool.direct:
                     yield (" " if turn.text else "") + reply.speech
                 if reply.stream:
                     async for delta in reply.stream:

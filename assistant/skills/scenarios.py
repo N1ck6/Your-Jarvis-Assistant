@@ -64,6 +64,9 @@ class ScenariosSkill(Skill):
                 self.app.ui.notify("Сценарии", f"Ошибка в файле сценариев: {exc}")
         return self._items
 
+    def examples(self) -> list[str]:  # type: ignore[override]
+        return [f"{sc.phrases[0]} (сценарий «{sc.name}»)" for sc in self.scenarios() if sc.phrases]
+
     def match(self, text: str) -> Intent | None:
         for sc in self.scenarios():
             for phrase in sc.phrases:

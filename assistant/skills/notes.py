@@ -77,6 +77,15 @@ def list_file_name(spoken: str) -> str | None:
 class NotesSkill(Skill):
     name = "notes"
     title = "Заметки и списки"
+    examples = [
+        'добавь в список покупок <что>',
+        'добавь в список дел <что>',
+        'запиши <заметка>',
+        'что в списке покупок',
+        'какие у меня дела',
+        'вычеркни <пункт>',
+        'очисти список покупок',
+    ]
 
     def folder(self) -> Path:
         folder = self.app.cfg.resolve(self.app.cfg.notes.dir)

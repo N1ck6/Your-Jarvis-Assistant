@@ -28,6 +28,16 @@ VOICES: list[VoiceSpec] = [
     VoiceSpec("silero:eugene", "Silero · Евгений", "silero", "eugene", "male", False, 145,
               ["Полностью офлайн", "Естественные ударения и «ё»", "~0,1 с на фразу на CPU", "Спокойный низкий голос"],
               ["Лицензия CC BY-NC-SA (только некоммерческое использование)"]),
+    # Jarvis's voice cloned from the recorded packs (ESpeech-TTS-1 / F5-TTS, needs an NVIDIA GPU).
+    VoiceSpec("clone:jarvis-og", "Джарвис OG (клон голоса)", "clone", "jarvis-og", "male", False, 2700,
+              ["Голос Джарвиса из фильма для любых ответов", "Офлайн, модель Apache-2.0"],
+              ["Нужна видеокарта: ~1–1,5 с до первого слова", "Изредка проглатывает слово"]),
+    VoiceSpec("clone:jarvis-remaster", "Джарвис Remaster (клон голоса)", "clone", "jarvis-remaster", "male", False, 2700,
+              ["Чистый ремастер голоса Джарвиса для любых ответов", "Офлайн, модель Apache-2.0"],
+              ["Нужна видеокарта: ~1–1,5 с до первого слова", "Изредка проглатывает слово"]),
+    VoiceSpec("clone:jarvis-howdy", "Джарвис Howdy (клон голоса)", "clone", "jarvis-howdy", "male", False, 2700,
+              ["Голос Джарвиса из роликов Хауди Хо", "Офлайн, модель Apache-2.0"],
+              ["Нужна видеокарта: ~1–1,5 с до первого слова", "Изредка проглатывает слово"]),
 ]
 
 BY_ID = {v.id: v for v in VOICES}

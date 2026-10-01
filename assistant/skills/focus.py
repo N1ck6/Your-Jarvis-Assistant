@@ -7,7 +7,7 @@ import re
 import time
 
 from assistant.audio import earcons
-from assistant.nlu import parse_duration, say_duration, words_to_numbers
+from assistant.nlu import parse_duration, say_duration, sleep_until, words_to_numbers
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
 log = logging.getLogger("focus")
@@ -21,6 +21,12 @@ _START = re.compile(rf"^(запусти|начни|включи|давай|ст�
 class FocusSkill(Skill):
     name = "focus"
     title = "Помодоро"
+    examples = [
+        'помодоро',
+        'помодоро на <N> минут',
+        'останови помодоро',
+        'сколько до перерыва',
+    ]
 
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
@@ -68,7 +74,7 @@ class FocusSkill(Skill):
     async def _phase_wait(self, name: str, minutes: int) -> None:
         self._phase = name
         self._phase_end = time.time() + minutes * 60
-        await asyncio.sleep(minutes * 60)
+        await sleep_until(self._phase_end)
 
     async def _run(self, work: int) -> None:
         cfg = self.app.cfg.focus

@@ -47,7 +47,8 @@ class Utterance:
 @dataclass
 class ListenerEvents:
     on_wake: Callable[[], None]
-    on_stop_word: Callable[[str], None]
+    # (word, recent audio float32 16 kHz): the word is only a hint, the assistant verifies it with STT
+    on_stop_word: Callable[[str, np.ndarray], None]
     on_speech_start: Callable[[], None]
     on_utterance: Callable[[Utterance], None]
     on_await_timeout: Callable[[], None]
@@ -102,6 +103,7 @@ class ListenerCore:
             self.mode = Mode.AWAIT
             self._await_deadline = time.monotonic() + seconds
             self._await_voiced = 0
+            self.pre_roll.clear()  # it may hold Jarvis's own voice from the speakers
 
     def start_dictation(self, until_pause: bool) -> None:
         """until_pause=False: record until stop_dictation() (hotkey held); True: stop after a pause (voice)."""
@@ -172,9 +174,11 @@ class ListenerCore:
         if self.assistant_speaking:
             word = self.wake.feed_stop(pcm)
             if word:
-                log.info("Стоп-слово: %s", word)
+                log.info("Похоже на стоп-слово: %s", word)
+                tail = list(self._segment)[-int(2.5 / self.frame_sec):]
+                audio = np.concatenate(tail).astype(np.float32) / 32768.0
                 self._reset_segment()
-                self.ev.on_stop_word(word)
+                self.ev.on_stop_word(word, audio)
                 return
         if self.wake.feed_wake(pcm):
             log.info("Кодовое слово")

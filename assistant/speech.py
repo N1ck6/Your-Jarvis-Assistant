@@ -77,6 +77,7 @@ class Speaker:
         self.speaking = False
         self.last_text = ""
         self.current_text = ""  # sentence being played right now (echo check for stop words)
+        self._recent: list[str] = []  # last few sentences that went to the speakers
 
     def stop(self) -> None:
         self._gen += 1
@@ -96,14 +97,21 @@ class Speaker:
             finally:
                 self._end()
 
+    def recent_text(self) -> str:
+        """What Jarvis said in the last few sentences (the mic may still be hearing it)."""
+        return " ".join(self._recent + [self.current_text])
+
     def _begin(self, text: str) -> None:
         self.current_text = text
+        if text:
+            self._recent = (self._recent + [text])[-3:]
         if not self.speaking:
             self.speaking = True
             self.on_start()
 
     def _end(self) -> None:
         self.current_text = ""
+        self._recent = []
         if self.speaking:
             self.speaking = False
             self.on_end()

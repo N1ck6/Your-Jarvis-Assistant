@@ -1,5 +1,8 @@
-# One-time setup: Python venv, dependencies, models, Ollama model.
-# Run from the project root:  powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+# One-time setup: Python venv, dependencies, models, Ollama models.
+# Run from the project root:
+#   powershell -ExecutionPolicy Bypass -File scripts\install.ps1                # Silero voice, CPU
+#   powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -JarvisVoice   # + Jarvis's cloned voice (NVIDIA GPU)
+param([switch]$JarvisVoice)
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
@@ -11,17 +14,28 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 $py = ".venv\Scripts\python.exe"
 & $py -m pip install --upgrade pip -q
 
-Write-Host "== PyTorch CPU (для голоса Silero)" -ForegroundColor Cyan
-& $py -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+if ($JarvisVoice) {
+    Write-Host "== PyTorch с CUDA (голос Джарвиса на видеокарте)" -ForegroundColor Cyan
+    & $py -m pip install -q "torch==2.11.0" "torchaudio==2.11.0" --index-url https://download.pytorch.org/whl/cu130
+} else {
+    Write-Host "== PyTorch CPU (голос Silero)" -ForegroundColor Cyan
+    & $py -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu
+}
 
 Write-Host "== Зависимости" -ForegroundColor Cyan
 & $py -m pip install -q -r requirements.txt
 
-Write-Host "== Модели (VAD, wake word, STT, голос)" -ForegroundColor Cyan
+if ($JarvisVoice) {
+    Write-Host "== Клон голоса Джарвиса (ESpeech-TTS-1 / F5-TTS)" -ForegroundColor Cyan
+    & $py -m pip install -q "f5-tts==1.1.22" --no-deps
+    & $py -m pip install -q -r requirements-voice.txt
+}
+
+Write-Host "== Модели (VAD, wake word, STT, голос, реплики Джарвиса)" -ForegroundColor Cyan
 & $py -m assistant.setup_models
 if ($LASTEXITCODE -ne 0) { throw "Не удалось скачать модели, запустите скрипт ещё раз" }
 
-Write-Host "== Локальная LLM" -ForegroundColor Cyan
+Write-Host "== Локальные модели" -ForegroundColor Cyan
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
     ollama pull qwen3:8b
     ollama pull qwen3-vl:4b-instruct   # screen help when Gemini is unavailable
@@ -31,4 +45,4 @@ if (Get-Command ollama -ErrorAction SilentlyContinue) {
 
 if (-not (Test-Path ".env")) { Copy-Item ".env.example" ".env" }
 Write-Host ""
-Write-Host "Готово. Впишите ключи GEMINI_API_KEY и GROQ_API_KEY в .env и запустите run.bat" -ForegroundColor Green
+Write-Host "Готово. Запустите run.bat, ключи GROQ_API_KEY и GEMINI_API_KEY можно вписать в трее -> Настройки -> ИИ" -ForegroundColor Green

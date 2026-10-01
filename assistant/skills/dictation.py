@@ -23,6 +23,10 @@ _INLINE_RAW = re.compile(r"^\W*(напечатай|набери|впиши|вс�
 class DictationSkill(Skill):
     name = "dictation"
     title = "Диктовка"
+    examples = [
+        'диктовка',
+        'напечатай <текст>',
+    ]
 
     def match(self, text: str) -> Intent | None:
         if _START.match(text):

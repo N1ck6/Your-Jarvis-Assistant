@@ -46,9 +46,12 @@ model = "gigaam-v3-e2e-rnnt"
 quantization = "int8"
 
 [tts]
+# silero:eugene (instant, CPU) | clone:jarvis-og | clone:jarvis-remaster | clone:jarvis-howdy (Jarvis voice, GPU)
 voice = "silero:eugene"
 rate = 1.0
 volume = 1.0
+# Cloned voice quality/speed: diffusion steps, 12 fast ... 32 clean.
+clone_nfe = 16
 
 [voice]
 # Recorded Jarvis reactions (Priler's project): jarvis-remaster | jarvis-howdy | jarvis-og | none
@@ -70,6 +73,10 @@ local_chain = ["local"]
 # After a 429 / quota error the provider is skipped for this long.
 cooldown_sec = 900
 request_timeout_sec = 25
+# Soft daily request budget (below the free-tier caps); the provider is skipped for the rest of the day.
+daily_limits = { "groq" = 900, "gemini" = 450 }
+# Previous turns sent with cloud questions. The router rewrites context into the question itself.
+cloud_history_turns = 1
 
 [llm.gemini]
 # Lite first: ~0.8 s answers; "flash-latest" is often overloaded (503) on the free tier.
@@ -80,7 +87,8 @@ max_output_tokens = 400
 [llm.groq]
 models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 web_search = true
-max_output_tokens = 600
+# Voice answers are short; a low cap saves tokens (gpt-oss reasoning is also counted here).
+max_output_tokens = 400
 
 [llm.local]
 host = "http://127.0.0.1:11434"
@@ -90,10 +98,27 @@ keep_alive = "30m"
 num_ctx = 4096
 temperature = 0.6
 
+[router]
+# Free-form requests the regex modules did not understand go to a model that maps them to commands.
+enabled = true
+# auto = local model if Ollama runs, otherwise the cloud chain (costs tokens) | local | cloud
+provider = "auto"
+context_turns = 4
+timeout_sec = 6.0
+# Cached cloud answers: fresh data (rates, news) and stable facts (definitions).
+cache_fresh_min = 20
+cache_stable_days = 14
+
+[files]
+# Folders Jarvis may read: list, count, size, search. He never edits, moves or deletes files.
+allowed_dirs = ["~/Desktop", "~/Documents", "~/Downloads", "~/Music", "~/Pictures", "~/Videos"]
+# Let the model run read-only whitelisted cmd commands (dir, tree, where, ipconfig, systeminfo, tasklist...).
+allow_cmd = true
+
 [skills]
 # Order matters: the first module whose phrase matches wins. User scenarios go first.
 enabled = ["scenarios", "system", "media", "music", "dictation", "selection", "screen", "notes", "windows",
-           "search", "timers", "focus", "memory", "briefing", "agenda", "explain", "voice", "weather", "apps"]
+           "search", "timers", "focus", "memory", "briefing", "agenda", "pc", "explain", "voice", "weather", "apps"]
 
 [apps]
 browser_home = "https://ya.ru"
@@ -108,6 +133,9 @@ default_list = "заметки"
 
 [music]
 dir = "~/Desktop/music"
+volume = 0.6
+# Music volume share while Jarvis listens or speaks.
+duck_volume = 0.2
 
 [calendar]
 # Secret iCal links: Google Calendar -> Settings -> "Secret address in iCal format".

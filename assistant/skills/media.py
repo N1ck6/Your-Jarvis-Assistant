@@ -19,7 +19,7 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
                             rf"^{_SOUND} (тише|потише|ниже|поменьше|пониже)")),
     ("next", re.compile(r"^(давай |включи )?следующ\w*( трек| песн\w*| композици\w*| видео)?$|\bследующ\w* (трек|песн\w*|композици\w*)|\b(скипни|скипай|пропусти|переключи)( эт\w*)? (трек|песн\w*|композици\w*)|\bдругую песню|\bдругой трек|^некст$|^дальше трек")),
     ("prev", re.compile(r"^(давай |включи )?предыдущ\w*( трек| песн\w*| композици\w*)?$|\bпредыдущ\w* (трек|песн\w*|композици\w*)|\b(верни|включи) (прошл|предыдущ)\w* (трек|песн\w*)|\bпрошл(ый|ую) (трек|песню)|^трек назад$")),
-    ("pause", re.compile(r"^(пауза|на паузу|поставь на паузу|паузу)$|\b(поставь|поставить) (на )?паузу|\b(останови|приостанови|выключи|стопни|тормозни)\s+(музыку|видео|воспроизведение|трек|песню|плеер|ролик)|^стоп музыка$")),
+    ("pause", re.compile(r"^(пауза|на паузу|поставь на паузу|паузу)$|\b(поставь|поставить) (на )?паузу|\b(останови|приостанови|стопни|тормозни)\s+(музыку|видео|воспроизведение|трек|песню|плеер|ролик)")),
     ("resume", re.compile(r"^(продолжи|продолжай|играй|плей|play)( играть| воспроизведение| музыку| видео)?$|\bсними (с )?паузы|\bсними паузу|\bиграй дальше|\bвключи (музыку )?обратно|\bпродолжи (воспроизведение|музыку|видео)")),
     ("volume", re.compile(r"\b(какая|сколько|какой уровень) (сейчас )?громкост|^громкость$")),
 ]
@@ -28,6 +28,17 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 class MediaSkill(Skill):
     name = "media"
     title = "Громкость и воспроизведение"
+    examples = [
+        'громче',
+        'тише',
+        'выключи звук',
+        'включи звук',
+        'пауза',
+        'продолжи',
+        'следующий трек',
+        'предыдущий трек',
+        'какая громкость',
+    ]
 
     def match(self, text: str) -> Intent | None:
         for action, pattern in _PATTERNS:
@@ -50,6 +61,7 @@ class MediaSkill(Skill):
     async def handle(self, intent: Intent) -> Reply:
         action = intent.slots.get("action") if intent.action == "tool" else intent.action
         steps = int(intent.slots.get("steps", 5))
+        music = self.app.music
         match action:
             case "vol_up":
                 await run_blocking(winutil.change_volume, steps)
@@ -59,6 +71,15 @@ class MediaSkill(Skill):
                 await run_blocking(winutil.set_mute, True)
             case "unmute":
                 await run_blocking(winutil.set_mute, False)
+            # Jarvis's own player gets the command while it is active; otherwise any app via media keys.
+            case "pause" if music.active:
+                music.pause()
+            case "resume" if music.active:
+                music.resume()
+            case "next" if music.active:
+                music.next()
+            case "prev" if music.active:
+                music.prev()
             case "pause" | "resume":
                 await run_blocking(winutil.press, winutil.MEDIA_KEYS["play_pause"])
             case "next":

@@ -69,6 +69,9 @@ def parse_deck(text: str, final: bool) -> Deck:
 class ExplainSkill(Skill):
     name = "explain"
     title = "Объяснение в окне"
+    examples = [
+        'объясни подробно <тема> (окно с карточками)',
+    ]
 
     def match(self, text: str) -> Intent | None:
         for pattern in _TRIGGERS:

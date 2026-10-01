@@ -32,6 +32,14 @@ _NOT_WINDOWS = {"звук", "музыку", "микрофон", "свет", "т�
 class WindowsSkill(Skill):
     name = "windows"
     title = "Окна и процессы"
+    examples = [
+        'закрой <приложение>',
+        'сверни всё',
+        'сверни окно',
+        'разверни окно',
+        'переключись на <приложение>',
+        'какие окна открыты',
+    ]
 
     def match(self, text: str) -> Intent | None:
         for action, pattern in _PATTERNS:

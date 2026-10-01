@@ -75,8 +75,13 @@ def _number(match: re.Match[str]) -> str:
         return raw
 
 
+_TYPOGRAPHY = str.maketrans({"\u202f": " ", "\u00a0": " ", "\u2009": " ", "\u2007": " ", "≈": " около ",
+                              "~": " около ", "×": " на ", "→": ", ", "•": ", "})
+
+
 def clean_for_speech(text: str) -> str:
-    """Engine-independent cleanup (also used for Edge)."""
+    """Engine-independent cleanup."""
+    text = text.translate(_TYPOGRAPHY)
     text = _MD_LINK.sub(r"\1", text)
     text = _URL.sub("", text)
     text = _CITE.sub("", text)

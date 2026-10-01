@@ -39,6 +39,13 @@ PROMPTS = {
 class SelectionSkill(Skill):
     name = "selection"
     title = "Работа с выделенным текстом"
+    examples = [
+        'переведи выделенное',
+        'объясни выделенное',
+        'перескажи выделенное',
+        'исправь ошибки',
+        'прочитай выделенное',
+    ]
 
     def match(self, text: str) -> Intent | None:
         for action, pattern in _PATTERNS:

@@ -34,7 +34,7 @@ def run(core: ListenerCore, pcm: np.ndarray) -> None:
 def make_core(events_log):
     ev = ListenerEvents(
         on_wake=lambda: events_log.append("wake"),
-        on_stop_word=lambda w: events_log.append(("stop", w)),
+        on_stop_word=lambda w, audio: events_log.append(("stop", w)),
         on_speech_start=lambda: events_log.append("speech"),
         on_utterance=lambda u: events_log.append(("utt", u.source, len(u.audio) / 16000)),
         on_await_timeout=lambda: events_log.append("timeout"),

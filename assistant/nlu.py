@@ -100,6 +100,16 @@ def say_duration(seconds: int) -> str:
     return " ".join(parts) or "0 секунд"
 
 
+async def sleep_until(unix_time: float, step: float = 15.0) -> None:
+    """Waits by the wall clock: asyncio.sleep is monotonic and on Windows stops while the PC sleeps,
+    so a plain sleep(3600) would fire late by however long the laptop was closed."""
+    import asyncio
+    import time
+
+    while (left := unix_time - time.time()) > 0:
+        await asyncio.sleep(min(left, step))
+
+
 # ---------------------------------------------------------------- commands
 _PUNCT = re.compile(r"[«»\"“”„!?;:()\[\]{}…,]")
 _LONE_DOT = re.compile(r"(?<![\w])\.|\.(?![\w])")  # keeps dots inside "habr.com" and "3.5"
@@ -114,6 +124,12 @@ _POLITE_HEAD = re.compile(
 _POLITE_TAIL = re.compile(r"(?:\s+(?:пожалуйста|плиз|please|будь добр|срочно|сейчас же))+$")
 
 
+# GigaAM writes some Russian words that sound English in Latin ("Стоп!" -> "Stop.").
+_LATIN_WORDS = {"stop": "стоп", "yes": "да", "no": "нет", "okay": "окей", "ok": "ок", "pause": "пауза",
+                "play": "плей", "next": "некст", "mute": "мьют", "jarvis": "джарвис"}
+_LATIN_RE = re.compile(r"\b(" + "|".join(_LATIN_WORDS) + r")\b")
+
+
 def normalize_command(text: str, strip_polite: bool = True) -> str:
     """'Джарвис, будь добр, открой «Телеграм»!' -> 'открой телеграм' (after strip_wake). Skills match on this."""
     t = text.lower().replace("ё", "е")
@@ -121,10 +137,25 @@ def normalize_command(text: str, strip_polite: bool = True) -> str:
     t = _LONE_DOT.sub(" ", t)
     t = _DASH.sub(" ", t)
     t = re.sub(r"\s+", " ", t).strip()
+    t = _LATIN_RE.sub(lambda m: _LATIN_WORDS[m.group(1)], t)
     if strip_polite:
         stripped = _POLITE_TAIL.sub("", _POLITE_HEAD.sub("", t)).strip()
+        stripped = re.sub(r"\s+(?:пожалуйста|плиз)\b", "", stripped)
+        # "расскажи мне шутку" -> "расскажи шутку": "мне" right after the verb carries no meaning for commands.
+        stripped = re.sub(r"^(\S+) мне (?=\S)", r"\1 ", stripped)
         t = stripped or t  # "давай" alone stays "давай" (it is an answer)
     return t
+
+
+_CMD_VERBS = (r"(?:открой|закрой|включи|выключи|поставь|найди|сверни|разверни|запусти|сделай|добавь|напомни|переключи|"
+              r"переключись|убери|отмени|покажи|запиши|громче|тише|пауза|останови|продолжи|засеки|скажи|вычеркни|"
+              r"перейди|верни|запомни|очисти|прочитай|переведи)")
+_COMPOUND = re.compile(rf"\s+(?:и|а|а потом|потом|затем|и потом|и затем|после этого|а затем|и еще|а еще|плюс)\s+(?={_CMD_VERBS}\b)")
+
+
+def split_compound(norm: str) -> list[str]:
+    """'закрой браузер и включи музыку' -> ['закрой браузер', 'включи музыку'] (only before a command verb)."""
+    return [p.strip() for p in _COMPOUND.split(norm) if p.strip()]
 
 
 YES = re.compile(r"^(да|ага|угу|давай|подтверждаю|конечно|точно|верно|выполняй|делай|так точно|именно|ок|окей|yes)\b")
@@ -140,6 +171,7 @@ def find_wake(text: str, phrases: list[str], min_ratio: int = 70) -> tuple[int, 
     """Span of the wake word in the text (fuzzy: 'Джарвис', 'Жарвис', 'Джервис')."""
     for m in _WORD.finditer(text):
         word = m.group(0).lower()
+        word = _LATIN_WORDS.get(word, word)  # "Jarvis" from the recognizer
         if any(fuzz.ratio(word, p) >= min_ratio for p in phrases):
             return m.span()
     return None

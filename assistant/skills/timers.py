@@ -10,7 +10,7 @@ import uuid
 from dataclasses import asdict, dataclass
 
 from assistant.audio import earcons
-from assistant.nlu import parse_duration, plural, say_duration, words_to_numbers
+from assistant.nlu import parse_duration, plural, say_duration, sleep_until, words_to_numbers
 from assistant.paths import DATA_DIR
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
@@ -55,6 +55,13 @@ class Timer:
 class TimersSkill(Skill):
     name = "timers"
     title = "Таймеры и напоминания"
+    examples = [
+        'поставь таймер на <N> минут',
+        'напомни через <N> минут <что>',
+        'какие у меня таймеры',
+        'отмени таймер',
+        'отмени все таймеры',
+    ]
 
     def __init__(self) -> None:
         self.timers: dict[str, Timer] = {}
@@ -144,7 +151,7 @@ class TimersSkill(Skill):
         self._save()
 
     async def _wait(self, timer: Timer) -> None:
-        await asyncio.sleep(timer.left())
+        await sleep_until(timer.due)
         self._remove(timer.id)
         text = f"Напоминаю: {timer.label}." if timer.label else "Время вышло, таймер сработал."
         self.app.ui.notify("Таймер", text)

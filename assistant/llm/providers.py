@@ -43,6 +43,7 @@ class Msg:
 
 class Provider(ABC):
     name = ""
+    last_usage: tuple[int, int] = (0, 0)  # (input tokens, output tokens) of the last finished request
 
     @abstractmethod
     def available(self) -> bool: ...
@@ -117,6 +118,10 @@ class GeminiProvider(Provider):
                     stream = await client.aio.models.generate_content_stream(model=model, contents=contents, config=cfg)
                     first = True
                     async for chunk in stream:
+                        meta = getattr(chunk, "usage_metadata", None)
+                        if meta is not None and meta.prompt_token_count:
+                            self.last_usage = (meta.prompt_token_count or 0,
+                                               (meta.candidates_token_count or 0) + (meta.thoughts_token_count or 0))
                         text = chunk.text or ""
                         if text:
                             if first:
@@ -178,6 +183,7 @@ class GroqProvider(Provider):
                 "max_completion_tokens": max_tokens or self.cfg.max_output_tokens,
                 "temperature": 0.5,
                 "stream": True,
+                "stream_options": {"include_usage": True},
             }
             if model.startswith("openai/gpt-oss"):
                 kwargs["reasoning_effort"] = "low"
@@ -188,6 +194,8 @@ class GroqProvider(Provider):
                 stream = await client.chat.completions.create(**kwargs)
                 first = True
                 async for chunk in stream:
+                    if getattr(chunk, "usage", None):
+                        self.last_usage = (chunk.usage.prompt_tokens or 0, chunk.usage.completion_tokens or 0)
                     if not chunk.choices:
                         continue
                     text = chunk.choices[0].delta.content or ""
@@ -226,6 +234,7 @@ class OllamaProvider(Provider):
 
         self.cfg = cfg
         self.client = AsyncClient(host=cfg.host)
+        self.healthy = False  # set by warmup(); the router prefers the local model when it runs
 
     def available(self) -> bool:
         return True
@@ -254,8 +263,10 @@ class OllamaProvider(Provider):
         try:
             await self.client.chat(model=self.cfg.model, messages=[{"role": "user", "content": "привет"}],
                                    think=False, keep_alive=self.cfg.keep_alive, options={"num_predict": 1})
+            self.healthy = True
             log.info("Локальная модель %s загружена", self.cfg.model)
         except Exception as exc:
+            self.healthy = False
             log.warning("Ollama недоступна (%s). Запустите Ollama.", exc)
 
     async def stream(self, messages: list[Msg], *, web: bool = False, max_tokens: int | None = None) -> AsyncIterator[str]:
@@ -274,6 +285,8 @@ class OllamaProvider(Provider):
                     continue
                 raise ProviderError(f"ollama/{model}: {exc}") from exc
         async for part in stream:
+            if part.done:
+                self.last_usage = (part.prompt_eval_count or 0, part.eval_count or 0)
             text = part.message.content or ""
             if text:
                 yield text

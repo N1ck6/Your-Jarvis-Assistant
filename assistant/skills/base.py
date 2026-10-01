@@ -41,6 +41,9 @@ class Reply:
     reaction: str = ""
     # Dangerous action: `speech` asks the question, `confirm` runs after the user says "да".
     confirm: Callable[[], Awaitable["Reply"]] | None = None
+    # The phrase looked like this skill's command but it cannot serve it ("открой что-нибудь послушать"):
+    # the brain asks the router first and speaks this reply only if the router has nothing better.
+    fallthrough: bool = False
 
 
 @dataclass
@@ -62,6 +65,7 @@ class Tool:
 class Skill(ABC):
     name: str = ""
     title: str = ""          # human name for docs/tray
+    examples: list[str] = []  # canonical commands for the router catalog ("<...>" = a value)
 
     def setup(self, app: "Assistant") -> None:
         self.app = app
@@ -72,6 +76,10 @@ class Skill(ABC):
 
     def tools(self) -> list[Tool]:
         return []
+
+    def followup(self, text: str, last: Intent) -> Intent | None:
+        """A short follow-up to this skill's previous command ("а завтра?", "а в Сочи?") -> updated intent."""
+        return None
 
     async def handle(self, intent: Intent) -> Reply:
         raise NotImplementedError

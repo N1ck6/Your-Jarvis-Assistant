@@ -60,6 +60,7 @@ class TtsCfg(BaseModel):
     voice: str = "silero:eugene"
     rate: float = 1.0
     volume: float = 1.0
+    clone_nfe: int = 16     # cloned voice: diffusion steps (12 fast ... 32 clean)
 
 
 class VoicePackCfg(BaseModel):
@@ -90,9 +91,29 @@ class LlmCfg(BaseModel):
     local_chain: list[str] = Field(default_factory=lambda: ["local"])
     cooldown_sec: float = 900
     request_timeout_sec: float = 25
+    # Soft daily budget below the free-tier caps (requests/day). The provider is skipped after it.
+    daily_limits: dict[str, int] = Field(default_factory=lambda: {"groq": 900, "gemini": 450})
+    # Previous turns sent with cloud questions (each costs tokens); the router already rewrites context away.
+    cloud_history_turns: int = 1
     gemini: CloudCfg = Field(default_factory=CloudCfg)
     groq: CloudCfg = Field(default_factory=CloudCfg)
     local: LocalLlmCfg = Field(default_factory=LocalLlmCfg)
+
+
+class RouterCfg(BaseModel):
+    enabled: bool = True
+    provider: str = "auto"          # auto (local if running, else cloud) | local | cloud
+    context_turns: int = 4
+    timeout_sec: float = 6.0
+    cache_fresh_min: int = 20       # answers about fresh data (rates, news)
+    cache_stable_days: int = 14     # answers about stable facts (definitions)
+
+
+class FilesCfg(BaseModel):
+    # Folders Jarvis may read (list, count, size, search). He never edits or deletes files.
+    allowed_dirs: list[str] = Field(default_factory=lambda: ["~/Desktop", "~/Documents", "~/Downloads", "~/Music",
+                                                             "~/Pictures", "~/Videos"])
+    allow_cmd: bool = True          # read-only whitelisted cmd commands for the model
 
 
 class SkillsCfg(BaseModel):
@@ -112,6 +133,8 @@ class NotesCfg(BaseModel):
 
 class MusicCfg(BaseModel):
     dir: str = "~/Desktop/music"
+    volume: float = 0.6
+    duck_volume: float = 0.2    # share of the volume while Jarvis listens or speaks
 
 
 class CalendarCfg(BaseModel):
@@ -163,6 +186,8 @@ class Settings(BaseModel):
     tts: TtsCfg = Field(default_factory=TtsCfg)
     voice: VoicePackCfg = Field(default_factory=VoicePackCfg)
     llm: LlmCfg = Field(default_factory=LlmCfg)
+    router: RouterCfg = Field(default_factory=RouterCfg)
+    files: FilesCfg = Field(default_factory=FilesCfg)
     skills: SkillsCfg = Field(default_factory=SkillsCfg)
     apps: AppsCfg = Field(default_factory=AppsCfg)
     explain: ExplainCfg = Field(default_factory=ExplainCfg)
@@ -226,3 +251,41 @@ def save_override(dotted_key: str, value: Any) -> None:
 
 def secret(name: str) -> str:
     return os.environ.get(name, "").strip()
+
+
+def model_value_map(cfg: Settings) -> dict[str, Any]:
+    """Current values as a nested dict (the settings page reads dotted keys from it)."""
+    return cfg.model_dump()
+
+
+def validate_changes(changes: dict[str, Any]) -> Settings:
+    """Settings as they would be after applying {dotted.key: value}; raises pydantic.ValidationError."""
+    with DEFAULT_FILE.open("rb") as f:
+        data = _deep_merge(tomllib.load(f), load_user_overrides())
+    for dotted, value in changes.items():
+        node = data
+        *parents, leaf = dotted.split(".")
+        for p in parents:
+            node = node.setdefault(p, {})
+        node[leaf] = value
+    return Settings.model_validate(data)
+
+
+def update_in_place(target: BaseModel, source: BaseModel) -> None:
+    """Copies values into the live settings object; modules keep references to its sub-objects."""
+    for name in type(source).model_fields:
+        new = getattr(source, name)
+        old = getattr(target, name)
+        if isinstance(new, BaseModel) and isinstance(old, BaseModel):
+            update_in_place(old, new)
+        else:
+            setattr(target, name, new)
+
+
+def set_env_key(name: str, value: str) -> None:
+    """Writes one KEY=value line into .env (other lines are kept) and the current environment."""
+    path = ROOT / ".env"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    lines = [ln for ln in lines if not ln.startswith(f"{name}=")] + [f"{name}={value.strip()}"]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.environ[name] = value.strip()

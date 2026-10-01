@@ -12,6 +12,7 @@ import time
 from typing import Callable
 
 from assistant.audio import earcons
+from assistant.audio.music import MusicPlayer
 from assistant.audio.listener import ListenerCore, ListenerEvents, Microphone, Mode, Utterance
 from assistant.audio.player import AudioClip, Player
 from assistant.audio.vad import SileroVad
@@ -42,9 +43,10 @@ class Assistant:
 
         self.dialog = Dialog(cfg.assistant.dialog_ttl_sec, cfg.assistant.dialog_max_turns)
         self.llm = LlmHub(cfg.llm)
-        self.tts = TtsManager(cfg.tts.voice, cfg.tts.rate)
+        self.tts = TtsManager(cfg.tts.voice, cfg.tts.rate, clone_nfe=cfg.tts.clone_nfe)
         self.pack: VoicePack | None = load_pack(cfg.voice.pack)
         self.player = Player(cfg.audio.output_device, cfg.tts.volume)
+        self.music = MusicPlayer(cfg.music.volume, cfg.music.duck_volume)
         self.speaker = Speaker(self.tts, self.player, on_start=self._on_speech_start, on_end=self._on_speech_end)
         self.skills = load_skills(cfg.skills.enabled)
         for skill in self.skills:
@@ -65,13 +67,22 @@ class Assistant:
         t = time.perf_counter()
         self.stt = create_stt(self.cfg.stt.engine, self.cfg.stt.model, self.cfg.stt.quantization)
         self.stt.warmup()
-        self.tts.preload()
-        self.tts.synth("Проверка.")
+        if self.tts.voice.engine == "clone":
+            # The cloned voice needs ~40 s to load: speak with Silero meanwhile, switch when it is ready.
+            target = self.tts.voice.id
+            self.tts.set_voice(self.tts.fallback_id)
+            threading.Thread(target=self._switch_voice, args=(target,), name="clone-load", daemon=True).start()
+        try:
+            self.tts.preload()
+            self.tts.synth("Проверка.")
+        except Exception:
+            log.exception("Голос %s не загрузился, переключаюсь на %s", self.tts.voice.id, self.tts.fallback_id)
+            self.tts.set_voice(self.tts.fallback_id)
         if self.use_mic:
             wake_cfg = self.cfg.wake
             events = ListenerEvents(
                 on_wake=lambda: self._threadsafe(self._on_wake),
-                on_stop_word=lambda w: self._threadsafe(self._on_stop_word, w),
+                on_stop_word=lambda w, audio: self._threadsafe(self._on_stop_word, w, audio),
                 on_speech_start=lambda: self._threadsafe(self._set_state, State.LISTENING),
                 on_utterance=lambda u: self._threadsafe(self._on_utterance, u),
                 on_await_timeout=lambda: self._threadsafe(self._on_await_timeout),
@@ -121,6 +132,7 @@ class Assistant:
         return self._ready.wait(timeout)
 
     async def shutdown(self) -> None:
+        self.music.stop()
         if self.mic:
             self.mic.stop()
         self.speaker.shutdown()
@@ -142,6 +154,8 @@ class Assistant:
 
     def _set_state(self, state: State, detail: str = "") -> None:
         self.state = state
+        # Music steps aside while Jarvis listens, thinks or talks.
+        self.music.duck(state in (State.LISTENING, State.THINKING, State.SPEAKING))
         self.ui.set_state(state, detail)
 
     def _earcon(self, clip: AudioClip) -> None:
@@ -156,6 +170,51 @@ class Assistant:
     def _on_speech_end(self) -> None:
         if self.listener:
             self.listener.assistant_speaking = False
+
+    def apply_settings(self, changes: dict) -> list[str]:
+        """Saves changes, updates the live settings; returns the keys that need a restart."""
+        from assistant.config import save_override, update_in_place, validate_changes
+        from assistant.settings_schema import RESTART_KEYS
+
+        new = validate_changes(changes)  # raises on bad values, nothing is saved then
+        for key, value in changes.items():
+            save_override(key, value)
+        update_in_place(self.cfg, new)
+        self.tts.rate = self.cfg.tts.rate
+        self.player.volume = self.cfg.tts.volume
+        self.music.volume = self.cfg.music.volume
+        self.music.duck_volume = self.cfg.music.duck_volume
+        if "voice.pack" in changes:
+            self.set_voice_pack(self.cfg.voice.pack)
+        if "tts.voice" in changes:
+            threading.Thread(target=self._switch_voice, args=(self.cfg.tts.voice,), daemon=True).start()
+        self.brain.router.reset_catalog()
+        for skill in self.skills:
+            if hasattr(skill, "_stamp"):
+                skill._stamp = -1  # re-scan folders (music) on next use
+        log.info("Настройки изменены: %s", ", ".join(changes))
+        return [k for k in changes if k in RESTART_KEYS]
+
+    def _switch_voice(self, voice_id: str) -> None:
+        try:
+            self.tts.set_voice(voice_id)
+        except Exception:
+            log.exception("Голос %s не загрузился", voice_id)
+            self.ui.notify("Голос", f"Не удалось загрузить голос {voice_id}, остаётся прежний")
+
+    def restart(self) -> None:
+        """Starts a fresh instance (it waits for this one to release the lock) and exits."""
+        import subprocess
+        import sys
+
+        from assistant.paths import ROOT
+
+        exe = ROOT / ".venv" / "Scripts" / "pythonw.exe"
+        cmd = [str(exe) if exe.exists() else sys.executable, "-m", "assistant", "--wait-lock"]
+        subprocess.Popen(cmd, cwd=str(ROOT), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+                         | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        log.info("Перезапуск")
+        self.on_exit()
 
     def set_voice_pack(self, pack_id: str) -> None:
         self.pack = load_pack(pack_id)
@@ -256,16 +315,32 @@ class Assistant:
 
     # ------------------------------------------------------------------ listener events
     def _on_wake(self) -> None:
+        # Jarvis saying his own name through the speakers is not a wake word.
+        if self.speaker.speaking and find_wake(self.speaker.recent_text(), self.cfg.wake.phrases, 85):
+            log.info("Своё имя в собственной речи, игнорирую")
+            if self.listener:
+                self.listener.to_wait()
+            return
         self.interrupt()
         self._earcon(earcons.WAKE)
         self._set_state(State.LISTENING)
 
-    def _on_stop_word(self, word: str) -> None:
-        # With speakers the mic hears Jarvis himself: ignore a stop word he is saying right now.
-        if word and word in normalize_command(self.speaker.current_text).split():
-            log.info("«%s» из собственной речи, игнорирую", word)
+    def _on_stop_word(self, word: str, audio) -> None:
+        asyncio.create_task(self._verify_stop_word(word, audio))
+
+    async def _verify_stop_word(self, word: str, audio) -> None:
+        """Vosk with a tiny grammar maps any speech to its nearest word, and the mic hears Jarvis himself.
+        So the stop word must be confirmed by the real recognizer and must not be in what Jarvis just said."""
+        if not self.speaker.speaking:
             return
-        log.info("Прерван словом «%s», слушаю команду", word)
+        text = await asyncio.get_running_loop().run_in_executor(None, self.stt.transcribe, audio)
+        heard = normalize_command(text, strip_polite=False).split()
+        own = set(normalize_command(self.speaker.recent_text(), strip_polite=False).split())
+        stops = [w for w in heard if w in self.cfg.wake.stop_words and w not in own]
+        if not stops:
+            log.info("Стоп-слово «%s» не подтвердилось (слышно: «%s»), продолжаю", word, text[:80])
+            return
+        log.info("Прерван словом «%s», слушаю команду", stops[0])
         self.interrupt()
         self._earcon(earcons.WAKE)
         if self.listener:
@@ -319,12 +394,15 @@ class Assistant:
         try:
             reply = await self.brain.handle(query)
             listen_after = await self._deliver(reply, started)
+            while self.brain.extra:
+                listen_after = await self._deliver(self.brain.extra.pop(0), started)
             while self.brain.deferred:
                 skill, intent = self.brain.deferred.pop(0)
                 listen_after = await self._deliver(await skill.handle(intent), started)
         except asyncio.CancelledError:
             log.info("Запрос отменён")
             self.brain.deferred.clear()
+            self.brain.extra.clear()
             raise
         except Exception:
             log.exception("Ошибка обработки запроса")

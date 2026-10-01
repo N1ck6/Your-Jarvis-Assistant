@@ -3,180 +3,323 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Голос Джарвиса</title>
+<title>Настройки Джарвиса</title>
 <style>
   :root {
-    --bg: #f3f4f6; --panel: #ffffff; --text: #12161d; --muted: #5f6b7c; --line: #dfe3ea;
-    --accent: #2458b8; --accent-soft: #e5ecf9; --good: #1f7a51; --good-soft: #e1f2e9;
-    --shadow: 0 1px 2px rgba(15,25,40,.06), 0 4px 16px rgba(15,25,40,.05);
+    --bg: #f3f4f6; --panel: #ffffff; --text: #12161d; --muted: #5f6b7c; --line: #dfe3ea; --input: #f7f8fa;
+    --accent: #2458b8; --accent-soft: #e5ecf9; --good: #1f7a51; --good-soft: #e1f2e9; --warn: #9a5b00; --warn-soft: #fbefdc;
+    --bad: #b3413f; --shadow: 0 1px 2px rgba(15,25,40,.06), 0 4px 16px rgba(15,25,40,.05);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0c0f14; --panel: #151a22; --text: #e6eaf1; --muted: #8b96a8; --line: #252c38;
-      --accent: #6d9bf0; --accent-soft: #1a2740; --good: #4cc38a; --good-soft: #14302a; --shadow: none;
+      --bg: #0c0f14; --panel: #151a22; --text: #e6eaf1; --muted: #8b96a8; --line: #252c38; --input: #10141b;
+      --accent: #6d9bf0; --accent-soft: #1a2740; --good: #4cc38a; --good-soft: #14302a; --warn: #e0a64a; --warn-soft: #33281a;
+      --bad: #e0716e; --shadow: none;
     }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 "Segoe UI", system-ui, sans-serif; }
-  main { max-width: 1040px; margin: 0 auto; padding: 28px 16px 64px; }
-  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -.2px; }
-  .sub { color: var(--muted); margin: 0 0 22px; }
-  h2 { font-size: 18px; margin: 28px 0 10px; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
-  textarea { width: 100%; min-height: 70px; resize: vertical; border-radius: 10px; border: 1px solid var(--line);
-             background: var(--bg); color: var(--text); padding: 10px 12px; font: inherit; }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
-  .chip { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 999px; padding: 5px 12px;
-          font: inherit; font-size: 13px; cursor: pointer; }
-  .chip:hover { border-color: var(--accent); }
-  .chip.playing { border-color: var(--accent); background: var(--accent-soft); }
-  .chip small { color: var(--muted); }
-  label.inline { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 14px; }
-  input[type=range] { accent-color: var(--accent); width: 140px; }
-  .btn { border: none; border-radius: 10px; padding: 8px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+  nav { border-right: 1px solid var(--line); padding: 24px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  nav h1 { font-size: 20px; margin: 0 8px 18px; }
+  nav button { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text);
+               font: inherit; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+  nav button:hover { background: var(--accent-soft); }
+  nav button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  main { padding: 28px 24px 80px; max-width: 920px; width: 100%; }
+  h2 { font-size: 22px; margin: 0 0 16px; }
+  h3 { font-size: 16px; margin: 22px 0 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 6px 18px; box-shadow: var(--shadow); }
+  .field { display: grid; grid-template-columns: 1fr minmax(240px, 360px); gap: 16px; align-items: center;
+           padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .field:last-child { border-bottom: 0; }
+  .field .label b { font-weight: 600; display: block; }
+  .field .label small { color: var(--muted); }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); margin-left: 6px; font-weight: 600; }
+  input[type=text], input[type=number], input[type=time], input[type=password], select, textarea {
+    width: 100%; border-radius: 8px; border: 1px solid var(--line); background: var(--input); color: var(--text);
+    padding: 7px 10px; font: inherit; }
+  textarea { min-height: 420px; font: 13px/1.5 Consolas, "Cascadia Mono", monospace; resize: vertical; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 0; }
+  .path { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .btn { border: none; border-radius: 8px; padding: 7px 13px; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .btn.primary { background: var(--accent); color: #fff; }
   .btn.ghost { background: var(--accent-soft); color: var(--accent); }
-  .btn:disabled { opacity: .55; cursor: default; }
-  .metrics { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
-  .badge { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--good-soft); color: var(--good); }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
-  .card { display: flex; flex-direction: column; gap: 10px; }
+  .btn.small { padding: 3px 9px; font-weight: 500; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .list-item { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .chip { border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 999px; padding: 4px 11px;
+          font: inherit; font-size: 13px; cursor: pointer; }
+  .chip:hover, .chip.playing { border-color: var(--accent); background: var(--accent-soft); }
+  .chip small { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
   .card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-  .card h3 { margin: 0; font-size: 16px; }
-  .card p { margin: 0; color: var(--muted); font-size: 13.5px; }
-  .reactions { display: flex; flex-wrap: wrap; gap: 6px; }
-  .actions { margin-top: auto; }
-  ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+  .card h4 { margin: 0; font-size: 15px; }
+  .card p, .card li { margin: 0; color: var(--muted); font-size: 13px; }
+  .card ul { margin: 0; padding-left: 18px; }
+  .metrics { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  .note { color: var(--muted); font-size: 13.5px; margin: 8px 0 14px; }
+  .banner { display: none; position: sticky; top: 0; z-index: 5; background: var(--warn-soft); color: var(--warn);
+            border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
+  .banner.show { display: flex; gap: 12px; align-items: center; }
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0;
-           background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; transition: .25s; pointer-events: none; }
+           background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; transition: .25s; pointer-events: none; z-index: 10; }
   .toast.show { opacity: 1; transform: translateX(-50%); }
+  .ok { color: var(--good); } .bad { color: var(--bad); }
+  @media (max-width: 760px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; padding: 12px; }
+    nav h1 { width: 100%; margin: 0 0 6px; }
+    nav button { width: auto; }
+    .field { grid-template-columns: 1fr; gap: 8px; }
+    main { padding: 18px 16px 60px; }
+  }
 </style>
 </head>
 <body>
-<main>
-  <h1>Голос Джарвиса</h1>
-  <p class="sub">Ответы озвучивает синтезированный голос. Короткие реакции — «Слушаю, сэр», «Слушаюсь, сэр», «Всегда к вашим услугам» —
-    звучат записями оригинального Джарвиса из проекта Хауди Хо.</p>
-
-  <h2>Синтезированный голос</h2>
-  <section class="panel">
-    <div class="row" style="margin-top:0">
-      <b id="voiceTitle">Silero · Евгений</b><span class="badge">Офлайн</span>
-      <span class="metrics" id="synthMetrics"></span>
-    </div>
-    <ul id="voiceNotes"></ul>
-    <div class="row"><textarea id="text"></textarea></div>
-    <div class="row" id="presets"></div>
-    <div class="row">
-      <label class="inline">Скорость речи <input type="range" id="rate" min="0.8" max="1.3" step="0.05" value="1"> <span id="rateVal">1.00</span></label>
-      <span style="flex:1"></span>
-      <button class="btn ghost" id="speak">▶ Прослушать</button>
-      <button class="btn primary" id="saveRate">Сохранить скорость</button>
-    </div>
-  </section>
-
-  <h2>Реплики Джарвиса</h2>
-  <div class="grid" id="packs"></div>
-</main>
+<div class="layout">
+  <nav id="nav"><h1>Джарвис</h1></nav>
+  <main>
+    <div class="banner" id="banner"><span class="grow">Часть изменений вступит в силу после перезапуска.</span>
+      <button class="btn primary" id="restartBtn">Перезапустить Джарвиса</button></div>
+    <div id="page"></div>
+  </main>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
-const PRESETS = {
-  "Короткий ответ": "Сейчас в Москве плюс двенадцать градусов, облачно. К вечеру возможен дождь, сэр.",
-  "Таймер": "Хорошо, через пятнадцать минут напомню: выключить плиту.",
-  "Объяснение": "Оперативная память — это рабочий стол, а диск — шкаф. На столе всё под рукой, но места мало.",
-  "Числа": "Курс доллара — 92 рубля 40 копеек, биткоин подорожал на 3,5%.",
+const $ = (s, el = document) => el.querySelector(s);
+const h = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "class") el.className = v;
+    else if (v !== undefined && v !== null && v !== false) el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) if (kid !== null && kid !== undefined) el.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return el;
 };
-const $ = (id) => document.getElementById(id);
-const state = { pack: "", packs: [], audio: null, playingChip: null };
+const api = async (url, body) => {
+  const r = await fetch(url, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+};
+const toast = (msg) => { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600); };
+const getPath = (obj, key) => key.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+const S = { sections: [], values: {}, canRestart: false, devices: null, ollama: null, audio: null };
 
-function toast(msg) {
-  const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600);
+async function save(key, value) {
+  try {
+    const r = await api("/api/settings", { changes: { [key]: value } });
+    let node = S.values; const parts = key.split("."); parts.slice(0, -1).forEach(p => node = node[p] ??= {}); node[parts.at(-1)] = value;
+    if (r.restart.length) { $("#banner").classList.add("show"); toast("Сохранено — нужен перезапуск"); } else toast("Сохранено");
+  } catch (e) { toast(e.message); }
 }
 
-async function playUrl(url, init) {
-  if (state.audio) state.audio.pause();
+// ---------------------------------------------------------------- field widgets
+function widget(f) {
+  const v = getPath(S.values, f.key);
+  const num = (x) => (f.step && f.step < 1 ? parseFloat(x) : parseInt(x, 10));
+  switch (f.type) {
+    case "bool": return h("input", { type: "checkbox", checked: !!v, onchange: e => save(f.key, e.target.checked) });
+    case "text": case "hotkey": return h("input", { type: "text", value: v ?? "", onchange: e => save(f.key, e.target.value.trim()) });
+    case "time": return h("input", { type: "time", value: v ?? "", onchange: e => save(f.key, e.target.value) });
+    case "number": return h("input", { type: "number", value: v ?? 0, min: f.min, max: f.max, step: f.step ?? 1, onchange: e => save(f.key, num(e.target.value)) });
+    case "range": {
+      const out = h("span", { class: "metrics" }, (+v).toFixed(2));
+      return h("div", { class: "row" }, h("input", { type: "range", class: "grow", value: v, min: f.min, max: f.max, step: f.step,
+        oninput: e => out.textContent = (+e.target.value).toFixed(2), onchange: e => save(f.key, parseFloat(e.target.value)) }), out);
+    }
+    case "select": return selectEl(f.options, v, val => save(f.key, val));
+    case "device_in": case "device_out": {
+      const el = selectEl([[v ?? "", v || "Системный по умолчанию"]], v ?? "", val => save(f.key, val));
+      loadDevices().then(d => fillSelect(el, f.type === "device_in" ? d.inputs : d.outputs, v ?? ""));
+      return el;
+    }
+    case "ollama": {
+      const el = selectEl([[v, v]], v, val => save(f.key, val));
+      loadOllama().then(d => fillSelect(el, d.models.map(m => [m, m]).concat(d.models.includes(v) ? [] : [[v, v + " (не скачана)"]]), v));
+      return el;
+    }
+    case "folder": {
+      const path = h("span", { class: "path grow", title: v }, v);
+      return h("div", { class: "row" }, path, h("button", { class: "btn ghost small", onclick: async () => {
+        const r = await api("/api/pick-folder", { initial: v || "" }); if (r.path) { path.textContent = r.path; path.title = r.path; save(f.key, r.path); }
+      } }, "Выбрать…"));
+    }
+    case "folders": case "list": {
+      const items = [...(v || [])];
+      const box = h("div");
+      const render = () => {
+        box.replaceChildren(...items.map((it, i) => h("div", { class: "list-item" },
+          f.type === "folders" ? h("span", { class: "path grow", title: it }, it)
+                               : h("input", { type: "text", class: "grow", value: it, onchange: e => { items[i] = e.target.value.trim(); save(f.key, items.filter(Boolean)); } }),
+          h("button", { class: "btn ghost small", title: "Убрать", onclick: () => { items.splice(i, 1); render(); save(f.key, items); } }, "✕"))),
+          h("button", { class: "btn ghost small", onclick: async () => {
+            if (f.type === "folders") { const r = await api("/api/pick-folder", {}); if (r.path && !items.includes(r.path)) { items.push(r.path); render(); save(f.key, items); } }
+            else { items.push(""); render(); }
+          } }, f.type === "folders" ? "Добавить папку…" : "Добавить"));
+      };
+      render();
+      return box;
+    }
+    case "chain": {
+      const all = f.options.map(o => o[0]);
+      let order = [...(v || [])]; all.forEach(x => { if (!order.includes(x)) order.push(x); });
+      const enabled = new Set(v || []);
+      const box = h("div");
+      const commit = () => save(f.key, order.filter(x => enabled.has(x)));
+      const render = () => box.replaceChildren(...order.map((x, i) => h("div", { class: "list-item" },
+        h("input", { type: "checkbox", checked: enabled.has(x), onchange: e => { e.target.checked ? enabled.add(x) : enabled.delete(x); commit(); } }),
+        h("span", { class: "grow" }, `${i + 1}. ${f.options.find(o => o[0] === x)?.[1] ?? x}`),
+        h("button", { class: "btn ghost small", disabled: i === 0, onclick: () => { [order[i - 1], order[i]] = [order[i], order[i - 1]]; render(); commit(); } }, "↑"),
+        h("button", { class: "btn ghost small", disabled: i === order.length - 1, onclick: () => { [order[i + 1], order[i]] = [order[i], order[i + 1]]; render(); commit(); } }, "↓"))));
+      render();
+      return box;
+    }
+  }
+  return h("span", {}, String(v));
+}
+function selectEl(options, value, onchange) { const el = h("select", { onchange: e => onchange(e.target.value) }); fillSelect(el, options, value); return el; }
+function fillSelect(el, options, value) { el.replaceChildren(...options.map(([val, label]) => h("option", { value: val, selected: val === value }, label))); }
+async function loadDevices() { return S.devices ??= await api("/api/devices"); }
+async function loadOllama() { return S.ollama ??= await api("/api/ollama"); }
+
+function renderFields(fields) {
+  return h("div", { class: "panel" }, fields.map(f => h("div", { class: "field" },
+    h("div", { class: "label" }, h("b", {}, f.label, f.restart ? h("span", { class: "badge" }, "перезапуск") : null), f.hint ? h("small", {}, f.hint) : null),
+    h("div", {}, widget(f)))));
+}
+
+// ---------------------------------------------------------------- special pages
+async function playAudio(url, init) {
+  if (S.audio) S.audio.pause();
   const r = await fetch(url, init);
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
-  const blob = await r.blob();
-  const src = URL.createObjectURL(blob);
-  state.audio = new Audio(src);
-  await state.audio.play();
-  await new Promise(res => { state.audio.onended = res; state.audio.onpause = res; });
+  const src = URL.createObjectURL(await r.blob());
+  S.audio = new Audio(src); await S.audio.play();
+  await new Promise(res => { S.audio.onended = res; S.audio.onpause = res; });
   URL.revokeObjectURL(src);
   return r;
 }
 
-async function speak() {
-  $("synthMetrics").textContent = "синтез…";
-  try {
-    const t0 = performance.now();
-    const r = await fetch("/api/synth", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: $("text").value, rate: +$("rate").value }) });
-    const ms = r.headers.get("X-Synth-Ms"), sec = +r.headers.get("X-Audio-Sec");
-    $("synthMetrics").textContent = `синтез ${ms} мс · звук ${sec.toFixed(1)} с`;
-    const src = URL.createObjectURL(await r.blob());
-    if (state.audio) state.audio.pause();
-    state.audio = new Audio(src); await state.audio.play();
-  } catch (e) { $("synthMetrics").textContent = "Ошибка: " + e.message; }
-}
-
-function renderPacks() {
-  const box = $("packs"); box.innerHTML = "";
-  const all = [...state.packs, { id: "none", title: "Без реплик — только синтезированный голос и короткие сигналы", reactions: [] }];
-  for (const p of all) {
-    const card = document.createElement("div");
-    card.className = "panel card" + (p.id === state.pack ? " selected" : "");
+async function voicePage(fields) {
+  const st = await api("/api/state");
+  const text = h("textarea", { style: "min-height:70px" }, "Слушаюсь, сэр. Сейчас в Москве плюс двенадцать градусов, облачно. Напомню через пятнадцать минут.");
+  const voiceCards = h("div", { class: "grid" }, st.voices.map(v => {
+    const metrics = h("div", { class: "metrics" });
+    const selected = v.id === S.values.tts.voice;
+    return h("div", { class: "card" + (selected ? " selected" : "") },
+      h("h4", {}, v.title), h("ul", {}, [...v.pros, ...v.cons].map(x => h("li", {}, x))), metrics,
+      h("div", { class: "row" },
+        h("button", { class: "btn ghost small", onclick: async () => {
+          metrics.textContent = v.engine === "clone" ? "синтез… (первая загрузка модели до 40 с)" : "синтез…";
+          try {
+            const r = await playAudio("/api/synth", { method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: text.value, voice_id: v.id, rate: S.values.tts.rate }) });
+            metrics.textContent = `синтез ${r.headers.get("X-Synth-Ms")} мс · звук ${(+r.headers.get("X-Audio-Sec")).toFixed(1)} с`;
+          } catch (e) { metrics.textContent = "Ошибка: " + e.message; }
+        } }, "▶ Слушать"),
+        h("button", { class: "btn primary small", disabled: selected, onclick: async () => { await save("tts.voice", v.id); route("Голос"); } }, selected ? "Используется" : "Выбрать")));
+  }));
+  const packCards = h("div", { class: "grid" }, [...st.packs, { id: "none", title: "Без реплик — только синтезированный голос", reactions: [] }].map(p => {
     const [name, ...rest] = p.title.split(" — ");
-    card.innerHTML = `<h3>${name}</h3><p>${rest.join(" — ")}</p><div class="reactions"></div>
-      <div class="actions"><button class="btn primary" ${p.id === state.pack ? "disabled" : ""}>${p.id === state.pack ? "Используется" : "Выбрать"}</button></div>`;
-    const reactions = card.querySelector(".reactions");
-    for (const r of p.reactions) {
-      for (let i = 0; i < r.count; i++) {
-        const chip = document.createElement("button");
-        chip.className = "chip";
-        chip.innerHTML = r.count > 1 ? `${r.title} <small>${i + 1}</small>` : r.title;
-        chip.onclick = async () => {
-          document.querySelectorAll(".chip.playing").forEach(c => c.classList.remove("playing"));
-          chip.classList.add("playing");
-          try { await playUrl(`/api/clip/${p.id}/${r.key}/${i}`); } catch (e) { toast(e.message); }
-          chip.classList.remove("playing");
-        };
-        reactions.appendChild(chip);
-      }
+    const chips = h("div", { class: "row" });
+    for (const r of p.reactions) for (let i = 0; i < r.count; i++) {
+      const chip = h("button", { class: "chip", onclick: async () => {
+        document.querySelectorAll(".chip.playing").forEach(c => c.classList.remove("playing")); chip.classList.add("playing");
+        try { await playAudio(`/api/clip/${p.id}/${r.key}/${i}`); } catch (e) { toast(e.message); } chip.classList.remove("playing");
+      } }, r.title, r.count > 1 ? h("small", {}, " " + (i + 1)) : null);
+      chips.append(chip);
     }
-    card.querySelector(".btn").onclick = () => select(p.id);
-    box.appendChild(card);
-  }
+    const selected = p.id === S.values.voice.pack;
+    return h("div", { class: "card" + (selected ? " selected" : "") }, h("h4", {}, name), h("p", {}, rest.join(" — ")), chips,
+      h("div", {}, h("button", { class: "btn primary small", disabled: selected, onclick: async () => { await save("voice.pack", p.id); route("Голос"); } }, selected ? "Используется" : "Выбрать")));
+  }));
+  return [h("h3", {}, "Голос ответов"), h("p", { class: "note" }, "Клон голоса Джарвиса синтезируется на видеокарте моделью ESpeech-TTS-1 по записям из пакета. Silero — мгновенный, на процессоре."),
+          text, h("div", { style: "height:12px" }), voiceCards,
+          h("h3", {}, "Параметры"), renderFields(fields.filter(f => !["tts.voice", "voice.pack"].includes(f.key))),
+          h("h3", {}, "Записанные реплики"), h("p", { class: "note" }, "Короткие реакции оригинального Джарвиса: «Слушаю, сэр», «Слушаюсь, сэр», приветствия, шутки."), packCards];
 }
 
-async function select(packId) {
-  const r = await fetch("/api/select", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pack: packId, rate: +$("rate").value }) });
-  if (!r.ok) { toast("Не удалось сохранить"); return; }
-  state.pack = (await r.json()).pack;
-  renderPacks();
-  toast("Сохранено — Джарвис уже использует этот выбор");
+async function aiPage(fields) {
+  const ai = await api("/api/ai");
+  const keys = await api("/api/keys");
+  const rows = Object.entries(ai.status).map(([name, status]) => {
+    const u = ai.today[name] || { requests: 0, in: 0, out: 0 };
+    const limit = ai.limits[name];
+    return h("tr", {}, h("td", {}, name), h("td", { class: status === "готов" ? "ok" : "bad" }, status),
+      h("td", {}, `${u.requests}${limit ? " / " + limit : ""}`), h("td", {}, `${u.in.toLocaleString("ru")} / ${u.out.toLocaleString("ru")}`));
+  });
+  const keyRows = Object.entries(keys).map(([name, set]) => {
+    const input = h("input", { type: "password", placeholder: set ? "ключ задан — введите новый, чтобы заменить" : "вставьте ключ" });
+    return h("div", { class: "field" }, h("div", { class: "label" }, h("b", {}, name), h("small", { class: set ? "ok" : "bad" }, set ? "задан" : "не задан")),
+      h("div", { class: "row" }, h("div", { class: "grow" }, input), h("button", { class: "btn ghost small", onclick: async () => {
+        if (!input.value.trim()) return; await api("/api/keys", { name, value: input.value.trim() }); input.value = "";
+        $("#banner").classList.add("show"); toast("Ключ сохранён в .env — нужен перезапуск");
+      } }, "Сохранить")));
+  });
+  return [renderFields(fields),
+          h("h3", {}, "Расход сегодня"), h("p", { class: "note" }, "Запросы и токены (вход / выход). Локальная модель бесплатна; облако ограничено лимитами выше."),
+          h("div", { class: "panel" }, h("table", {}, h("tr", {}, h("th", {}, "Провайдер"), h("th", {}, "Состояние"), h("th", {}, "Запросов"), h("th", {}, "Токены")), rows)),
+          h("h3", {}, "Ключи API"), h("p", { class: "note" }, "Ключи хранятся только в файле .env на этом компьютере и не показываются."),
+          h("div", { class: "panel" }, keyRows)];
+}
+
+async function scenariosPage() {
+  const sc = await api("/api/scenarios");
+  const area = h("textarea", { spellcheck: "false" }, sc.text);
+  return [h("p", { class: "note" }, "Фраза → действия. Шаги: open, url, close, say, reaction, wait, timer, media, music, search, minimize_all, command. Подсказки — в комментариях файла."),
+          area, h("div", { class: "row", style: "margin-top:10px" }, h("span", { class: "metrics grow" }, sc.path),
+          h("button", { class: "btn primary", onclick: async () => {
+            try { const r = await api("/api/scenarios", { text: area.value }); toast(`Сохранено, сценариев: ${r.count}`); } catch (e) { toast(e.message); }
+          } }, "Сохранить"))];
+}
+
+async function phrasesPage() {
+  const pb = await api("/api/phrasebook");
+  if (!pb.items.length) return [h("p", { class: "note" }, "Пока пусто. Когда вы говорите непредусмотренную фразу, модель переводит её в команду и Джарвис запоминает перевод — в следующий раз без модели и без токенов.")];
+  const rows = pb.items.map(it => h("tr", {}, h("td", {}, it.phrase), h("td", {}, it.commands.join(" → ")), h("td", {}, it.uses),
+    h("td", {}, h("button", { class: "btn ghost small", onclick: async () => { await api("/api/phrasebook/delete", { text: it.phrase }); route("Выученные фразы"); } }, "Забыть"))));
+  return [h("p", { class: "note" }, "Свободные формулировки, которые модель перевела в команды. Если перевод неверный — удалите строку."),
+          h("div", { class: "panel" }, h("table", {}, h("tr", {}, h("th", {}, "Фраза"), h("th", {}, "Команды"), h("th", {}, "Раз"), h("th", {})), rows))];
+}
+
+// ---------------------------------------------------------------- routing
+const EXTRA = ["Сценарии", "Выученные фразы"];
+async function route(title) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.textContent === title));
+  const page = $("#page");
+  const section = S.sections.find(s => s.title === title);
+  let body;
+  try {
+    if (title === "Голос") body = await voicePage(section.fields);
+    else if (title === "ИИ") body = await aiPage(section.fields);
+    else if (title === "Сценарии") body = await scenariosPage();
+    else if (title === "Выученные фразы") body = await phrasesPage();
+    else body = [renderFields(section.fields)];
+  } catch (e) { body = [h("p", { class: "bad" }, "Ошибка: " + e.message)]; }
+  page.replaceChildren(h("h2", {}, title), ...body);
+  history.replaceState(null, "", "#" + encodeURIComponent(title));
 }
 
 async function init() {
-  const box = $("presets");
-  for (const [name, text] of Object.entries(PRESETS)) {
-    const b = document.createElement("button");
-    b.className = "chip"; b.textContent = name; b.onclick = () => { $("text").value = text; };
-    box.appendChild(b);
-  }
-  $("text").value = PRESETS["Короткий ответ"];
-  const data = await (await fetch("/api/state")).json();
-  state.pack = data.pack; state.packs = data.packs;
-  $("voiceTitle").textContent = data.voice.title;
-  $("voiceNotes").innerHTML = [...data.voice.pros, ...data.voice.cons].map(x => `<li>${x}</li>`).join("");
-  $("rate").value = data.rate; $("rateVal").textContent = (+data.rate).toFixed(2);
-  $("rate").oninput = () => { $("rateVal").textContent = (+$("rate").value).toFixed(2); };
-  $("speak").onclick = speak;
-  $("saveRate").onclick = () => select(state.pack);
-  renderPacks();
+  const data = await api("/api/settings");
+  S.sections = data.sections; S.values = data.values; S.canRestart = data.can_restart;
+  const nav = $("#nav");
+  for (const title of [...S.sections.map(s => s.title), ...EXTRA]) nav.append(h("button", { onclick: () => route(title) }, title));
+  $("#restartBtn").disabled = !S.canRestart;
+  $("#restartBtn").onclick = async () => { await api("/api/restart", {}); toast("Перезапускаю…"); $("#banner").classList.remove("show"); setTimeout(() => location.reload(), 12000); };
+  const start = decodeURIComponent(location.hash.slice(1)) || "Основное";
+  route([...S.sections.map(s => s.title), ...EXTRA].includes(start) ? start : "Основное");
 }
 init();
 </script>

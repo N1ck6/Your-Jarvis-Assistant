@@ -27,6 +27,7 @@ class FakeApp:
         self.interrupted = False
         self.announced = []
         self.mic = None
+        self.music = type("Music", (), {"active": False, "state": "stopped", "current": None})()
 
     def interrupt(self):
         self.interrupted = True
@@ -64,6 +65,23 @@ CASES = [
     ("выключи микрофон", "system", "mute"), ("не слушай", "system", "mute"),
     ("что ты умеешь", "system", "help"), ("какие у тебя команды", "system", "help"),
     ("выключись", "system", "exit"), ("заверши работу", "system", "exit"),
+    ("ещё раз", "system", "again"), ("снова", "system", "again"), ("сделай ещё раз", "system", "again"),
+    ("расскажи мне шутку", "system", "joke"), ("открой, пожалуйста, телеграм", "apps", "open"),
+    # --- music player
+    ("что играет", "music", "now"), ("что за песня", "music", "now"),
+    ("сколько композиций в папке музыка", "music", "count"), ("сколько треков", "music", "count"),
+    ("сколько песен у меня в папке с музыкой", "music", "count"), ("выключи музыку", "music", "stop"),
+    # --- computer & files (read-only)
+    ("сколько места на диске", "pc", "disk"), ("сколько свободного места на компьютере", "pc", "disk"),
+    ("сколько свободной оперативной памяти", "pc", "ram"), ("что грузит компьютер", "pc", "cpu"),
+    ("почему тормозит компьютер", "pc", "cpu"), ("сколько работает компьютер", "pc", "uptime"),
+    ("заряд батареи", "pc", "battery"), ("какой у меня ip", "pc", "ip"), ("какой mac адрес у моего компьютера", "pc", "mac"),
+    ("сколько файлов в загрузках", "pc", "count"), ("сколько pdf в документах", "pc", "count"),
+    ("сколько фото на рабочем столе", "pc", "count"), ("что в загрузках", "pc", "recent"),
+    ("последние загрузки", "pc", "recent"), ("что я скачал", "pc", "recent"),
+    ("сколько весит папка загрузки", "pc", "size"), ("найди файл отчет", "pc", "find"),
+    ("где лежит договор", "pc", "find"), ("открой папку загрузки", "pc", "open_dir"),
+    ("хватает ли мне места на компе", "pc", "disk"),
     # --- media (no "set volume to N")
     ("громче", "media", "vol_up"), ("сделай погромче", "media", "vol_up"), ("прибавь звук", "media", "vol_up"),
     ("увеличь громкость", "media", "vol_up"), ("тише", "media", "vol_down"), ("убавь", "media", "vol_down"),
@@ -290,3 +308,27 @@ def test_apps_resolve_alias(app):
     assert apps.resolve("ютуб")[1] == "https://youtube.com"
     assert apps.resolve("habr.com") == ("habr.com", "https://habr.com")
     assert apps.resolve("несуществующее приложение xyz") is None
+
+
+@pytest.mark.parametrize("follow,slots", [
+    ("а завтра?", {"city": "казани", "day": 1}),
+    ("а послезавтра", {"city": "казани", "day": 2}),
+    ("а в Сочи?", {"city": "сочи", "day": 0}),
+    ("а в Сочи завтра", {"city": "сочи", "day": 1}),
+])
+def test_weather_followups(app, follow, slots):
+    from assistant.nlu import normalize_command
+
+    weather = next(s for s in app.skills if s.name == "weather")
+    last = app.brain.match_skill("какая погода в казани")[1]
+    intent = weather.followup(normalize_command(follow), last)
+    assert intent is not None and intent.slots == slots
+
+
+def test_weather_followup_ignores_other_phrases(app):
+    from assistant.nlu import normalize_command
+
+    weather = next(s for s in app.skills if s.name == "weather")
+    last = app.brain.match_skill("какая погода в казани")[1]
+    for phrase in ("а сколько ему лет", "открой телеграм", "спасибо"):
+        assert weather.followup(normalize_command(phrase), last) is None

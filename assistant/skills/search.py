@@ -28,6 +28,11 @@ def _engine(where: str, default: str) -> str:
 class SearchSkill(Skill):
     name = "search"
     title = "Поиск в браузере"
+    examples = [
+        'найди в яндексе <запрос>',
+        'найди на ютубе <запрос>',
+        'загугли <запрос>',
+    ]
 
     def match(self, text: str) -> Intent | None:
         default = self.app.cfg.search.default

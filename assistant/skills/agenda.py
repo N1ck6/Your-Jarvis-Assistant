@@ -35,6 +35,11 @@ def _to_local(value) -> tuple[dt.datetime, bool]:
 class AgendaSkill(Skill):
     name = "agenda"
     title = "Календарь"
+    examples = [
+        'что у меня сегодня',
+        'что у меня завтра',
+        'когда следующая встреча',
+    ]
 
     def __init__(self) -> None:
         self._cache: tuple[float, list[bytes]] | None = None

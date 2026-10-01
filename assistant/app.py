@@ -18,16 +18,22 @@ from assistant.paths import DATA_DIR
 log = logging.getLogger("app")
 
 
-def _single_instance() -> object | None:
-    """Keeps a lock on data/app.lock; returns None if another instance holds it."""
+def _single_instance(wait_sec: float = 0) -> object | None:
+    """Keeps a lock on data/app.lock; returns None if another instance holds it (after waiting, on restart)."""
+    import time
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    f = open(DATA_DIR / "app.lock", "a+")
-    try:
-        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError:
-        f.close()
-        return None
-    return f
+    deadline = time.monotonic() + wait_sec
+    while True:
+        f = open(DATA_DIR / "app.lock", "a+")
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            return f
+        except OSError:
+            f.close()
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.5)
 
 
 def _start_hotkeys(assistant, cfg: Settings) -> None:
@@ -74,12 +80,11 @@ def _start_hold_to_dictate(assistant, combo: str) -> None:
 
 
 def _start_voicelab(assistant, cfg: Settings):
-    from assistant.voicelab.server import VoiceLabServer, create_app
+    from assistant.voicelab.server import AssistantHost, VoiceLabServer, create_app
 
-    app = create_app(assistant.tts, current_pack=lambda: assistant.cfg.voice.pack, on_pack=assistant.set_voice_pack)
-    server = VoiceLabServer(app, cfg.voicelab.host, cfg.voicelab.port)
+    server = VoiceLabServer(create_app(AssistantHost(assistant)), cfg.voicelab.host, cfg.voicelab.port)
     server.start()
-    log.info("Выбор голоса: %s", assistant.voicelab_url)
+    log.info("Настройки: %s", assistant.voicelab_url)
     return server
 
 
@@ -138,6 +143,7 @@ def main() -> None:
     parser.add_argument("--voicelab", action="store_true", help="только страница выбора голоса")
     parser.add_argument("--list-devices", action="store_true", help="показать аудиоустройства")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--wait-lock", action="store_true", help=argparse.SUPPRESS)  # used by restart
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -151,7 +157,7 @@ def main() -> None:
     if args.voicelab:
         return _voicelab_only(cfg)
 
-    lock = _single_instance()
+    lock = _single_instance(wait_sec=20 if args.wait_lock else 0)
     if lock is None:
         log.error("Джарвис уже запущен (см. значок в трее).")
         sys.exit(1)
@@ -213,12 +219,10 @@ def _voicelab_only(cfg: Settings) -> None:
     import uvicorn
 
     from assistant.tts.manager import TtsManager
-    from assistant.voicelab.server import create_app
+    from assistant.voicelab.server import Host, create_app
 
-    tts = TtsManager(cfg.tts.voice, cfg.tts.rate)
+    tts = TtsManager(cfg.tts.voice, cfg.tts.rate, clone_nfe=cfg.tts.clone_nfe)
     url = f"http://{cfg.voicelab.host}:{cfg.voicelab.port}/"
-    log.info("Страница выбора голоса: %s", url)
+    log.info("Настройки: %s", url)
     threading.Timer(1.0, webbrowser.open, args=(url,)).start()
-    pack = {"id": cfg.voice.pack}
-    app = create_app(tts, current_pack=lambda: pack["id"], on_pack=lambda p: pack.update(id=p))
-    uvicorn.run(app, host=cfg.voicelab.host, port=cfg.voicelab.port, log_level="warning")
+    uvicorn.run(create_app(Host(cfg, tts)), host=cfg.voicelab.host, port=cfg.voicelab.port, log_level="warning")

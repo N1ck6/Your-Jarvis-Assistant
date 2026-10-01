@@ -382,8 +382,8 @@ class QtUi(QObject):
         scen.triggered.connect(lambda: subprocess.Popen(["notepad.exe", str(scenarios_file())]))
         notes = menu.addAction("Папка заметок")
         notes.triggered.connect(lambda: os.startfile(a.cfg.resolve(a.cfg.notes.dir)))  # type: ignore[attr-defined]
-        voice = menu.addAction("Голос Джарвиса…")
-        voice.triggered.connect(lambda: webbrowser.open(a.voicelab_url))
+        settings = menu.addAction("Настройки…")
+        settings.triggered.connect(lambda: webbrowser.open(a.voicelab_url))
         menu.addSeparator()
         quit_action = menu.addAction("Выход")
         quit_action.triggered.connect(on_quit)

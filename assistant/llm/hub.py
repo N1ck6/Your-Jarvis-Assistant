@@ -6,6 +6,7 @@ import time
 from typing import AsyncIterator
 
 from assistant.config import LlmCfg
+from assistant.llm.usage import Usage
 from assistant.llm.providers import (AuthError, GeminiProvider, GroqProvider, Msg, OllamaProvider, Provider, ProviderError,
                                      QuotaError)
 
@@ -29,6 +30,7 @@ class LlmHub:
         }
         self._cooldown_until: dict[str, float] = {}
         self.last_provider = ""
+        self.usage = Usage()
 
     def status(self) -> dict[str, str]:
         now = time.monotonic()
@@ -36,22 +38,30 @@ class LlmHub:
         for name, p in self.providers.items():
             if not p.available():
                 out[name] = "нет ключа"
+            elif self._over_budget(name):
+                out[name] = "дневной лимит"
             elif self._cooldown_until.get(name, 0) > now:
                 out[name] = f"пауза {int(self._cooldown_until[name] - now)} с"
             else:
                 out[name] = "готов"
         return out
 
+    def _over_budget(self, name: str) -> bool:
+        limit = self.cfg.daily_limits.get(name)
+        return bool(limit) and self.usage.requests_today(name) >= limit
+
     def _usable(self, chain: list[str]) -> list[Provider]:
         now = time.monotonic()
         return [self.providers[n] for n in chain
-                if n in self.providers and self.providers[n].available() and self._cooldown_until.get(n, 0) <= now]
+                if n in self.providers and self.providers[n].available() and self._cooldown_until.get(n, 0) <= now
+                and not self._over_budget(n)]
 
     async def stream(self, chain: list[str], messages: list[Msg], *, web: bool,
                      max_tokens: int | None = None) -> AsyncIterator[str]:
         """Yields deltas from the first provider that starts answering."""
         for provider in self._usable(chain):
             started = False
+            provider.last_usage = (0, 0)
             msgs = messages
             if web and provider is self.local:
                 msgs = [Msg("system", OFFLINE_NOTE), *messages]
@@ -62,6 +72,8 @@ class LlmHub:
                         self.last_provider = provider.name
                     yield delta
                 if started:
+                    self.usage.record(provider.name, *provider.last_usage)
+                    log.debug("%s: %s токенов", provider.name, provider.last_usage)
                     return
                 log.warning("%s вернул пустой ответ", provider.name)
             except AuthError as exc:

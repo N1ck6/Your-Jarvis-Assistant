@@ -15,6 +15,11 @@ _SLOWER = re.compile(r"говори (медленнее|помедленнее|�
 class VoiceSkill(Skill):
     name = "voice"
     title = "Настройки голоса"
+    examples = [
+        'смени голос',
+        'говори быстрее',
+        'говори медленнее',
+    ]
 
     def match(self, text: str) -> Intent | None:
         if _LAB.search(text):

@@ -1,4 +1,4 @@
-"""Update check: once a day compare the local version with GitHub (github.com/N1ck6/ai-waifu). Only a notification;
+"""Update check: once a day compare the local version with GitHub (github.com/N1ck6/Your-Jarvis-Assistant). Only a notification;
 nothing is downloaded or installed. A git checkout compares commits, an installed build compares release tags."""
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from assistant import __version__
 from assistant.paths import DATA_DIR, ROOT
 
 log = logging.getLogger("updates")
-REPO = "N1ck6/ai-waifu"
+REPO = "N1ck6/Your-Jarvis-Assistant"
 STATE = DATA_DIR / "update_check.json"
 DAY = 24 * 3600
 

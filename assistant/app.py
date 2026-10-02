@@ -44,10 +44,12 @@ def _start_hotkeys(assistant, cfg: Settings):
     keys.on_press(cfg.ui.hotkey_listen, lambda: assistant._threadsafe(assistant.listen_now))
     keys.on_press(cfg.ui.hotkey_mute, lambda: assistant._threadsafe(assistant.toggle_mute))
     keys.on_press(cfg.ui.hotkey_screen, lambda: assistant.submit(assistant.handle_text("что на экране")))
+    # Hold Ctrl+Alt+D: dictate while held (phrases are typed on release). Tap it: dictate hands-free, every phrase
+    # is typed as soon as it is said; tap again (or 30 s of silence) to stop.
+    assistant.keys_held = winutil.modifiers_down
     keys.on_hold(cfg.ui.hotkey_dictation,
-                 start=lambda: assistant._threadsafe(
-                     lambda: assistant.start_dictation(until_pause=False, paste=winutil.paste_text)),
-                 stop=lambda: assistant._threadsafe(assistant.stop_dictation))
+                 start=lambda: assistant._threadsafe(assistant.dictation_key_down, winutil.paste_text),
+                 stop=lambda held: assistant._threadsafe(assistant.dictation_key_up, held))
     keys.start()
 
     def report() -> None:

@@ -1,7 +1,11 @@
 """Dictation into the active window.
 
-- Hold Ctrl+Alt+D and speak: text appears where the cursor is (handled by app.py hotkeys).
-- "Джарвис, диктовка" -> "Диктуйте" -> speak -> pause 1.5 s -> text is pasted.
+Recording starts after a short rising cue. Text goes in phrase by phrase while you speak (a pause between
+sentences sends the phrase), not all at once at the end. Hotkeys are handled by app.py:
+- Tap Ctrl+Alt+D: hands-free, each phrase is typed as soon as it is said; tap again or 30 s of silence stops.
+- Hold Ctrl+Alt+D and speak: phrases are recognized as you go and typed when the keys are released
+  (Ctrl+V cannot be pressed while Ctrl+Alt are held).
+- "Джарвис, диктовка" -> "Диктуйте" -> cue -> speak; 3 s of silence ends it.
 - "Джарвис, напечатай привет, буду через 10 минут" -> the text is typed right away.
 """
 from __future__ import annotations

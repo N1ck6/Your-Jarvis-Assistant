@@ -67,7 +67,7 @@ class Hotkeys:
         if hid:
             self._press[hid] = callback
 
-    def on_hold(self, combo: str, start: Callable[[], None], stop: Callable[[], None]) -> None:
+    def on_hold(self, combo: str, start: Callable[[], None], stop: Callable[[float], None]) -> None:
         hid = self._add(combo)
         if hid:
             mods, vk = self._combos[hid][1:]
@@ -118,13 +118,15 @@ class Hotkeys:
             user32.UnregisterHotKey(None, hid)
 
     @staticmethod
-    def _run_hold(start: Callable[[], None], stop: Callable[[], None], mods: int, vk: int) -> None:
+    def _run_hold(start: Callable[[], None], stop: Callable[[float], None], mods: int, vk: int) -> None:
+        """stop gets how long the keys were held: a short tap and a hold can mean different things."""
+        pressed = time.monotonic()
         start()
 
         def watch() -> None:
             keys = [vk] + [MOD_VK[m] for m in MOD_VK if mods & m]
             while all(is_down(k) for k in keys):
                 time.sleep(0.03)
-            stop()
+            stop(time.monotonic() - pressed)
 
         threading.Thread(target=watch, name="hotkey-hold", daemon=True).start()

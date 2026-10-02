@@ -41,7 +41,9 @@ class Mode(str, enum.Enum):
 @dataclass
 class Utterance:
     audio: np.ndarray   # float32 16 kHz mono
-    source: str         # "wake" | "await" (bare wake, hotkey, after "стоп") | "hot" (window after an answer) | "dictation"
+    # "wake" | "await" (bare wake, hotkey, after "стоп") | "hot" (window after an answer) | "capture" (voice enrollment)
+    # | "dictation_part" (one phrase of a running dictation) | "dictation" (its last part, the end)
+    source: str
     voiced_sec: float = 0.0   # how much of it the VAD called speech
     barge_in: bool = False    # the wake word came while Jarvis was talking (his voice is in the audio)
 
@@ -94,13 +96,20 @@ class ListenerCore:
         self._await_source = "await"
         self._await_deadline = 0.0
         self._await_voiced = 0
-        self._dict_frames: list[np.ndarray] = []
+        # Dictation goes out in parts, one per phrase: a part ends at a pause between sentences, so the text
+        # appears while the user is still speaking instead of all at once at the end.
+        self._dict_frames: list[np.ndarray] = []   # the current part
         self._dict_until_pause = False
-        self._dict_voiced = 0
-        self._dict_silence = 0
-        self._dict_max = int(180 / self.frame_sec)
-        self._dict_pause_frames = int(1.6 / self.frame_sec)
+        self._dict_voiced = 0          # voiced frames in the whole dictation
+        self._dict_silence = 0         # silent frames since the last voiced one
+        self._dict_total = 0           # frames since the start
+        self._part_voiced = 0
+        self._dict_max = int(300 / self.frame_sec)
+        self._dict_pause_frames = int(3.0 / self.frame_sec)     # by voice: a 3 s silence ends the dictation
         self._dict_start_timeout = int(8.0 / self.frame_sec)
+        self._part_pause_frames = int(0.7 / self.frame_sec)     # a pause between sentences
+        self._part_max = int(20 / self.frame_sec)               # a long run-on sentence is cut anyway
+        self._part_lead = int(0.3 / self.frame_sec)             # silence kept before the first word of a part
 
     # --- control (any thread) ---
     def to_wait(self) -> None:
@@ -124,27 +133,49 @@ class ListenerCore:
             if not resume:
                 self.pre_roll.clear()  # it may hold Jarvis's own voice from the speakers
 
-    def start_dictation(self, until_pause: bool) -> None:
+    def start_dictation(self, until_pause: bool, pause_sec: float = 3.0) -> None:
         """until_pause=False: record until stop_dictation() (hotkey held); True: stop after a pause (voice)."""
         with self._lock:
             self.mode = Mode.DICTATE
-            self._dict_frames = list(self.pre_roll) if not until_pause else []
+            self._dict_pause_frames = int(pause_sec / self.frame_sec)
+            # The start cue has just played: the pre-roll would hold it, recording starts clean.
+            self._dict_frames = []
             self._dict_until_pause = until_pause
             self._dict_voiced = 0
             self._dict_silence = 0
+            self._dict_total = 0
+            self._part_voiced = 0
+
+    @property
+    def dictating(self) -> bool:
+        return self.mode is Mode.DICTATE
+
+    def end_dictation_after_pause(self, seconds: float) -> None:
+        """The hotkey was tapped, not held: dictation goes on hands-free and ends after this long a silence
+        (or on the next tap)."""
+        with self._lock:
+            self._dict_until_pause = True
+            self._dict_pause_frames = int(seconds / self.frame_sec)
 
     def stop_dictation(self) -> None:
         with self._lock:
             if self.mode is Mode.DICTATE:
                 self._finish_dictation()
 
+    def _emit_part(self, source: str) -> None:
+        frames, voiced = self._dict_frames, self._part_voiced
+        self._dict_frames, self._part_voiced = [], 0
+        if frames and voiced >= 3:
+            audio = np.concatenate(frames).astype(np.float32) / 32768.0
+            self.ev.on_utterance(Utterance(audio, source, voiced * self.frame_sec))
+        elif source == "dictation":
+            self.ev.on_utterance(Utterance(np.zeros(0, np.float32), source))
+
     def _finish_dictation(self) -> None:
-        frames, voiced = self._dict_frames, self._dict_voiced
-        self._dict_frames = []
+        """The last part goes out as "dictation": the end of the dictation."""
         self.mode = Mode.WAIT
         self._reset_segment()
-        audio = np.concatenate(frames).astype(np.float32) / 32768.0 if frames and voiced >= 3 else np.zeros(0, np.float32)
-        self.ev.on_utterance(Utterance(audio, "dictation"))
+        self._emit_part("dictation")
 
     def _reset_segment(self) -> None:
         self._segment.clear()
@@ -236,17 +267,23 @@ class ListenerCore:
 
     def _process_dictate(self, frame: np.ndarray, voiced: bool) -> None:
         self._dict_frames.append(frame)
+        self._dict_total += 1
         if voiced:
             self._dict_voiced += 1
+            self._part_voiced += 1
             self._dict_silence = 0
         else:
             self._dict_silence += 1
-        n = len(self._dict_frames)
-        if n >= self._dict_max:
-            self._finish_dictation()
-        elif self._dict_until_pause:
-            if (self._dict_voiced and self._dict_silence >= self._dict_pause_frames) or                     (not self._dict_voiced and n >= self._dict_start_timeout):
-                self._finish_dictation()
+        if self._dict_total >= self._dict_max:
+            return self._finish_dictation()
+        if self._dict_until_pause:
+            if (self._dict_voiced and self._dict_silence >= self._dict_pause_frames) or \
+                    (not self._dict_voiced and self._dict_total >= self._dict_start_timeout):
+                return self._finish_dictation()
+        if self._part_voiced == 0:
+            del self._dict_frames[:-self._part_lead]  # silence before the phrase is not kept
+        elif self._dict_silence >= self._part_pause_frames or len(self._dict_frames) >= self._part_max:
+            self._emit_part("dictation_part")
 
     def _process_await(self, frame: np.ndarray, voiced: bool) -> None:
         if voiced:

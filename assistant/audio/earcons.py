@@ -23,4 +23,6 @@ def _tone(freqs: list[float], dur: float, gap: float = 0.0) -> np.ndarray:
 WAKE = AudioClip(_tone([660, 990], 0.09), SR)
 DONE = AudioClip(_tone([880, 660], 0.08), SR)
 ERROR = AudioClip(_tone([330, 247], 0.14), SR)
-ALARM = AudioClip(np.concatenate([_tone([988, 1319], 0.12, 0.05)] * 3), SR)
+# Dictation: three rising notes, clearly different from the wake cue; recording starts right after it.
+DICTATE = AudioClip(_tone([587, 784, 1175], 0.07), SR)
+ALARM =AudioClip(np.concatenate([_tone([988, 1319], 0.12, 0.05)] * 3), SR)

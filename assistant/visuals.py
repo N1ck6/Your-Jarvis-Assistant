@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from assistant.assistant import Assistant
 
 log = logging.getLogger("visuals")
-UA = {"User-Agent": "JarvisDesktopAssistant/1.0 (https://github.com/N1ck6/ai-waifu)"}
+UA = {"User-Agent": "JarvisDesktopAssistant/1.0 (https://github.com/N1ck6/Your-Jarvis-Assistant)"}
 
 
 @dataclass

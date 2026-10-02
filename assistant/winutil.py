@@ -143,6 +143,11 @@ def _key(vk: int, up: bool) -> None:
     win32api.keybd_event(vk, 0, flags, 0)
 
 
+def modifiers_down() -> bool:
+    """Ctrl, Alt, Shift or Win is held right now (e.g. the dictation hotkey)."""
+    return any(win32api.GetAsyncKeyState(vk) & 0x8000 for vk in (*_VK.values(), win32con.VK_RWIN))
+
+
 def release_modifiers() -> None:
     """The user may still hold Ctrl/Alt from a hotkey; release them before synthetic shortcuts."""
     for vk in _VK.values():

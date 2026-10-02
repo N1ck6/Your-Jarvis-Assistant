@@ -86,24 +86,39 @@ def test_dictation_until_pause(tts):
     log = []
     core = make_core(log)
     core.start_dictation(until_pause=True)
-    run(core, speech_16k(tts, "Привет, буду через десять минут, возьми хлеба по дороге."))
+    run(core, np.concatenate([speech_16k(tts, "Привет, буду через десять минут, возьми хлеба по дороге."), pause(3.2)]))
     utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
-    assert utt and utt[0][1] == "dictation" and utt[0][2] > 2.0
+    assert utt and utt[-1][1] == "dictation" and sum(u[2] for u in utt) > 2.0
     assert core.mode is Mode.WAIT
 
 
-def test_dictation_hold_ends_on_release(tts):
+def test_dictation_comes_out_phrase_by_phrase(tts):
+    """Each phrase is handed over at the pause after it, while the user goes on: not all at once at the end."""
     log = []
     core = make_core(log)
     core.start_dictation(until_pause=False)
-    pcm = speech_16k(tts, "Первая фраза. Вторая фраза после паузы.")
-    silence = np.zeros(16000 * 3, dtype=np.int16)  # a long pause does not stop hold-to-dictate
-    for chunk in (pcm, silence, pcm):
+    pcm = trimmed(tts, "Первая фраза диктовки.")
+    for chunk in (pcm, pause(1.2), trimmed(tts, "Вторая фраза после паузы."), pause(1.2)):
         for i in range(0, len(chunk) - FRAME + 1, FRAME):
             core.process(chunk[i:i + FRAME])
-    assert not log
+    parts = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
+    assert [p[1] for p in parts] == ["dictation_part", "dictation_part"]
+    assert all(1.0 < p[2] < 3.5 for p in parts), parts   # one phrase each, silence before it trimmed
+    assert core.mode is Mode.DICTATE                       # a long pause does not stop hold-to-dictate
     core.stop_dictation()
-    assert log[0][0] == "utt" and log[0][1] == "dictation" and log[0][2] > 5
+    assert log[-1][:2] == ("utt", "dictation") and core.mode is Mode.WAIT
+
+
+def test_dictation_tail_is_the_last_part(tts):
+    log = []
+    core = make_core(log)
+    core.start_dictation(until_pause=False)
+    pcm = trimmed(tts, "Фраза без паузы в конце")
+    for i in range(0, len(pcm) - FRAME + 1, FRAME):
+        core.process(pcm[i:i + FRAME])
+    core.stop_dictation()
+    utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
+    assert len(utt) == 1 and utt[0][1] == "dictation" and utt[0][2] > 1.0
 
 
 def test_await_mode_captures_without_wake(tts):

@@ -141,6 +141,12 @@ class Assistant:
         self._ready = threading.Event()
         self._dictation_paste: Callable[[str], None] | None = None
         self._muted_before_dictation = False
+        self._dictating = False
+        self._dict_chain: asyncio.Task | None = None   # parts are recognized and pasted strictly in order
+        self._dict_pasted = 0                          # parts pasted in this dictation (a space before the next)
+        self._dict_key_stops = False                   # this hotkey press stops a running dictation
+        # Pasting presses Ctrl+V: it must wait while the user still holds Ctrl/Alt of the hotkey.
+        self.keys_held: Callable[[], bool] = lambda: False
         self._clip_texts: dict[int, str] = {}
         self.interruptions = 0
         from assistant.voiceprint import VoicePrint
@@ -497,37 +503,96 @@ class Assistant:
 
     # ------------------------------------------------------------------ dictation
     def start_dictation(self, until_pause: bool, paste: Callable[[str], None]) -> bool:
-        """Records speech and hands the text to `paste`. Hold-hotkey mode ends with stop_dictation()."""
-        if not self.listener or not self.mic:
+        """Records speech and types it where the cursor is, phrase by phrase while the user speaks.
+        A start cue plays first; recording begins right after it. Hold-hotkey mode ends with stop_dictation()."""
+        if not self.listener or not self.mic or self._dictating:
             return False
         self._muted_before_dictation = self.mic.paused
         if self.mic.paused:
             self.mic.resume()
         self.interrupt()
+        self._dictating = True
         self._dictation_paste = paste
-        self.listener.start_dictation(until_pause)
+        self._dict_pasted = 0
+        self._dict_chain = None
+        cue = earcons.DICTATE
+        self.player.effect(cue, max(self.cfg.audio.earcon_volume, 0.5))  # always: the user waits for it
+
+        def begin() -> None:
+            if self._dictating and self.listener:  # not released / cancelled during the cue
+                self.listener.start_dictation(until_pause)
+                self._set_state(State.LISTENING, "диктовка")
+        asyncio.get_running_loop().call_later(cue.seconds + 0.04, begin)
         self._set_state(State.LISTENING, "диктовка")
         return True
 
     def stop_dictation(self) -> None:
-        if self.listener:
+        if self.listener and self.listener.dictating:
             self.listener.stop_dictation()
+        elif self._dictating and self._dict_chain is None:
+            self._end_dictation()  # released during the start cue: nothing was recorded
 
-    async def _finish_dictation(self, utt: Utterance) -> None:
-        paste, self._dictation_paste = self._dictation_paste, None
+    def dictation_key_down(self, paste: Callable[[str], None]) -> None:
+        """Hotkey pressed: starts dictation, or stops one that is running (tap mode)."""
+        self._dict_key_stops = self._dictating
+        if self._dictating:
+            self.stop_dictation()
+        else:
+            self.start_dictation(until_pause=False, paste=paste)
+
+    def dictation_key_up(self, held_sec: float) -> None:
+        """Held: release ends the dictation. Tapped: it goes on hands-free with text appearing as you speak,
+        until the next tap or 30 s of silence."""
+        if self._dict_key_stops or not self._dictating:
+            return
+        if held_sec < 0.45:
+            if self.listener:
+                self.listener.end_dictation_after_pause(30.0)
+            log.info("Диктовка без удержания: до повторного нажатия или 30 с тишины")
+            return
+        self.stop_dictation()
+
+    def _on_dictation(self, utt: Utterance, last: bool) -> None:
+        """A phrase is ready: recognize it and paste it after the previous one, while the user keeps speaking."""
+        prev = self._dict_chain
+        self._dict_chain = asyncio.create_task(self._dictation_step(prev, utt, last))
+
+    async def _dictation_step(self, prev: asyncio.Task | None, utt: Utterance, last: bool) -> None:
+        if prev is not None:
+            try:
+                await prev
+            except Exception:
+                log.exception("Диктовка: часть не вставлена")
+        loop = asyncio.get_running_loop()
+        paste = self._dictation_paste
+        if utt.audio.size and paste is not None:
+            t = time.perf_counter()
+            res = await loop.run_in_executor(None, self.stt.recognize, utt.audio)
+            text = res.text.strip()
+            log.info("Диктовка: фраза %.1f с за %.0f мс (уверенность %.2f): %s", utt.audio.size / 16000,
+                     (time.perf_counter() - t) * 1000, res.confidence, private(text[:120]))
+            if text and (res.confidence >= 0.45 or utt.voiced_sec >= 1.0):  # a cough or a click is not a phrase
+                piece = (" " if self._dict_pasted else "") + text
+                await loop.run_in_executor(None, self._paste_when_keys_free, paste, piece)
+                self._dict_pasted += 1
+        if last:
+            if self._dict_pasted:
+                self._earcon(earcons.DONE)
+            self._end_dictation()
+
+    def _paste_when_keys_free(self, paste: Callable[[str], None], text: str) -> None:
+        """While the hotkey is held, Ctrl+V would become Ctrl+Alt+V: the phrase waits for the release."""
+        deadline = time.monotonic() + 600
+        while self.keys_held() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        paste(text)
+
+    def _end_dictation(self) -> None:
+        self._dictating = False
+        self._dictation_paste = None
+        self._dict_chain = None
         if self._muted_before_dictation and self.mic:
             self.mic.pause()
-        if utt.audio.size == 0 or paste is None:
-            self._set_state(State.MUTED if self._muted_before_dictation else State.IDLE)
-            return
-        self._set_state(State.THINKING, "распознаю диктовку")
-        t = time.perf_counter()
-        text = await asyncio.get_running_loop().run_in_executor(None, self.stt.transcribe_long, utt.audio)
-        log.info("Диктовка %.1f с за %.0f мс: %s", utt.audio.size / 16000, (time.perf_counter() - t) * 1000,
-                 private(text[:120]))
-        if text:
-            await asyncio.get_running_loop().run_in_executor(None, paste, text)
-            self._earcon(earcons.DONE)
         self._set_state(State.MUTED if self._muted_before_dictation else State.IDLE)
 
     # ------------------------------------------------------------------ listener events
@@ -593,8 +658,8 @@ class Assistant:
                 waiter.set_result(utt.audio)
             self._set_state(State.THINKING)
             return
-        if utt.source == "dictation":
-            asyncio.create_task(self._finish_dictation(utt))
+        if utt.source in ("dictation_part", "dictation"):
+            self._on_dictation(utt, last=utt.source == "dictation")
             return
         self._task = asyncio.create_task(self._process_audio(utt))
 

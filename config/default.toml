@@ -54,8 +54,9 @@ model = "gigaam-v3-e2e-rnnt"
 quantization = "int8"
 
 [tts]
-# silero:eugene (instant, CPU) | clone:jarvis-og | clone:jarvis-remaster | clone:jarvis-howdy (Jarvis voice, GPU)
-voice = "silero:eugene"
+# piper:ru_RU-jarvis-medium — Jarvis Lite: Jarvis's voice on the CPU (~0.1 s a phrase, the model ships with the repo)
+# silero:eugene — Silero, instant, CPU | clone:jarvis-remaster — the full clone (NVIDIA GPU, install.bat -JarvisVoice)
+voice = "piper:ru_RU-jarvis-medium"
 rate = 1.0
 volume = 1.0
 # Cloned voice quality/speed: diffusion steps, 12 fast ... 32 clean.
@@ -140,7 +141,7 @@ dir = "data/notes"
 default_list = "заметки"
 
 [music]
-dir = "~/Desktop/music"
+dir = "~/Music"
 volume = 0.6
 # Music volume share while Jarvis listens or speaks.
 duck_volume = 0.2

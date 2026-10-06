@@ -17,6 +17,9 @@ vosk>=0.3.45
 miniaudio>=1.61
 av>=12                     # FFmpeg decoder for music miniaudio cannot read (AAC/M4A named .mp3)
 
+# Light Jarvis voice (Piper, ONNX on the CPU; GPL-3, used only when that voice is selected)
+piper-tts>=1.8,<2
+
 # STT (GigaAM via ONNX)
 onnx-asr[hub]>=0.7
 

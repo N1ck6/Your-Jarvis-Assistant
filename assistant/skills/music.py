@@ -1,4 +1,4 @@
-"""Music from a local folder (default: Desktop/music), played by Jarvis's built-in player.
+"""Music from a local folder (default: the Music folder), played by Jarvis's built-in player.
 
 "включи <трек>", "включи музыку", "что играет", "сколько треков в папке музыка", "выключи музыку".
 Pause / next / previous are handled by the media module and go to this player while it is active.

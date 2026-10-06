@@ -193,4 +193,41 @@ class CloneEngine(TtsEngine):
         return AudioClip(np.asarray(wav, dtype=np.float32), sr)
 
 
-ENGINES: dict[str, type[TtsEngine]] = {"silero": SileroEngine, "clone": CloneEngine}
+class PiperEngine(TtsEngine):
+    """Piper (VITS, ONNX): a ~60 MB voice on the CPU, ~0.1 s a phrase. The light Jarvis voice is the clone distilled
+    into Piper (scripts/make_voice_dataset.py + scripts/piper/train.ps1). Voice id = model file name in models/piper.
+    The text gets the same normalization as the clone was trained on; stress comes from espeak-ng."""
+
+    name = "piper"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._voices: dict[str, object] = {}
+
+    @staticmethod
+    def model_path(voice: str):
+        return MODELS_DIR / "piper" / f"{voice}.onnx"
+
+    def load(self, voice: str) -> None:
+        if voice in self._voices:
+            return
+        from piper import PiperVoice
+
+        path = self.model_path(voice)
+        if not path.exists():
+            raise FileNotFoundError(f"нет модели {path}")
+        t = time.perf_counter()
+        self._voices[voice] = PiperVoice.load(path)
+        log.info("Piper %s загружен за %.1f с", voice, time.perf_counter() - t)
+
+    def _synth(self, text: str, voice: str, rate: float) -> AudioClip:
+        from piper import SynthesisConfig
+
+        model = self._voices[voice]
+        chunks = list(model.synthesize(text, SynthesisConfig(length_scale=1.0 / max(rate, 0.5))))  # type: ignore[attr-defined]
+        if not chunks:
+            return AudioClip(np.zeros(0, dtype=np.float32), 22050)
+        return AudioClip(np.concatenate([c.audio_float_array for c in chunks]).astype(np.float32), chunks[0].sample_rate)
+
+
+ENGINES: dict[str, type[TtsEngine]] = {"silero": SileroEngine, "clone": CloneEngine, "piper": PiperEngine}

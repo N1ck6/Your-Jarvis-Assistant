@@ -60,7 +60,7 @@ class SttCfg(BaseModel):
 
 
 class TtsCfg(BaseModel):
-    voice: str = "silero:eugene"
+    voice: str = "piper:ru_RU-jarvis-medium"
     rate: float = 1.0
     volume: float = 1.0
     clone_nfe: int = 16     # cloned voice: diffusion steps (12 fast ... 32 clean)
@@ -136,7 +136,7 @@ class NotesCfg(BaseModel):
 
 
 class MusicCfg(BaseModel):
-    dir: str = "~/Desktop/music"
+    dir: str = "~/Music"
     volume: float = 0.6
     duck_volume: float = 0.2    # share of the volume while Jarvis listens or speaks
 

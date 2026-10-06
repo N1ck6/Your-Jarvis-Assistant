@@ -35,7 +35,25 @@ VOICES: list[VoiceSpec] = [
               ["Нужна видеокарта: ~1–1,5 с до первого слова", "Изредка проглатывает слово"]),
 ]
 
+# The light Jarvis voice: the clone distilled into Piper (scripts/make_voice_dataset.py, scripts/piper/train.ps1).
+# Listed once the trained model is in models/piper.
+LITE = VoiceSpec("piper:ru_RU-jarvis-medium", "Джарвис Lite (лёгкий, без видеокарты)", "piper", "ru_RU-jarvis-medium",
+                 "male", False, 63,
+                 ["Голос клона Джарвиса на процессоре: ~0,1 с на фразу, ~60 МБ", "Видеокарта свободна для ИИ"],
+                 ["Чуть ровнее клона; ударения от espeak-ng"])
+
+
+def _lite_installed() -> bool:
+    from assistant.paths import MODELS_DIR
+
+    return (MODELS_DIR / "piper" / f"{LITE.voice}.onnx").exists()
+
+
+if _lite_installed():
+    VOICES.append(LITE)
+
 BY_ID = {v.id: v for v in VOICES}
+BY_ID[LITE.id] = LITE  # selectable by id even before the list is refreshed (it fails over to Silero if missing)
 
 
 def get_voice(voice_id: str) -> VoiceSpec:

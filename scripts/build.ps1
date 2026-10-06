@@ -1,4 +1,4 @@
-# Builds an installable folder dist\Jarvis (Jarvis.exe + config + data) and a zip of it.
+﻿# Builds an installable folder dist\Jarvis (Jarvis.exe + config + data) and a zip of it.
 # Uses a separate build venv with CPU PyTorch so the build does not carry CUDA (~3 GB).
 # Run from the project root:  powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 $ErrorActionPreference = "Stop"

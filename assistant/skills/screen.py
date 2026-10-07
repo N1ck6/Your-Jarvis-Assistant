@@ -46,7 +46,7 @@ class ScreenSkill(Skill):
         if not text or text.upper().startswith("НЕТ") or text.startswith("Не получилось"):
             return Reply("Текста в этой области не нашёл.")
         await run_blocking(winutil.set_clipboard_text, text)
-        self.app.ui.show_deck(Deck(title="Текст с экрана", cards=[Card("", text, "")], done=True))
+        self.app.ui.show_deck(Deck(title="Текст с экрана", cards=[Card("", text, "")], done=True, pinned=True))
         return Reply("Текст в буфере обмена.", reaction="ok", tool_result=text[:500], listen_after=False)
 
     name = "screen"

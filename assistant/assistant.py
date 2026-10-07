@@ -20,7 +20,7 @@ from assistant.audio.vad import SileroVad
 from assistant.audio.wake import VoskWake
 from assistant.brain import Brain, Dialog
 from assistant.config import Settings
-from assistant.core import Card, Deck, State, UiPort
+from assistant.core import Card, Deck, State, UiPort, reading_time
 from assistant.llm.hub import LlmHub
 from assistant.log import private
 from assistant.nlu import find_wake, is_bare_wake, is_echo, normalize_command, strip_echo, strip_wake
@@ -185,6 +185,7 @@ class Assistant:
                 on_speech_start=lambda: self._threadsafe(self._set_state, State.LISTENING),
                 on_utterance=lambda u: self._threadsafe(self._on_utterance, u),
                 on_await_timeout=lambda: self._threadsafe(self._on_await_timeout),
+                on_talk_over=self._on_talk_over,
             )
             self.listener = ListenerCore(
                 SileroVad(self.cfg.audio.sample_rate),
@@ -193,7 +194,14 @@ class Assistant:
                 end_silence_ms=self.cfg.audio.end_silence_ms, max_utterance_sec=self.cfg.audio.max_utterance_sec,
                 wake_grace_ms=self.cfg.audio.wake_grace_ms,
                 pre_roll_ms=self.cfg.audio.pre_roll_ms)
-            self.mic = Microphone(self.listener, self.cfg.audio.input_device, self.cfg.audio.sample_rate)
+            aec = None
+            if self.cfg.audio.echo_cancellation:
+                from assistant.audio import aec as aec_mod
+
+                aec = aec_mod.create()
+                if aec is not None:
+                    log.info("Эхоподавление включено: Джарвис не слышит сам себя")
+            self.mic = Microphone(self.listener, self.cfg.audio.input_device, self.cfg.audio.sample_rate, aec)
         log.info("Модели загружены за %.1f с", time.perf_counter() - t)
 
     async def run(self) -> None:
@@ -345,9 +353,18 @@ class Assistant:
             self.listener.assistant_speaking = True
         self._set_state(State.SPEAKING)
 
+    def _on_talk_over(self, talking: bool) -> None:
+        """The user talks over Jarvis (listener thread): his voice goes down at once so the rest of the phrase,
+        maybe "Джарвис, …", is heard over less echo; back up when the user is done."""
+        aec = self.mic.aec if self.mic else None
+        if talking and (aec is None or not aec.adapted):
+            return  # the first seconds the canceller lets echo through: that is not the user
+        self.player.duck = max(0.0, min(1.0, self.cfg.audio.talk_over_volume)) if talking else 1.0
+
     def _on_speech_end(self) -> None:
         if self.listener:
             self.listener.assistant_speaking = False
+        self.player.duck = 1.0
 
     def apply_settings(self, changes: dict) -> list[str]:
         """Saves changes, updates the live settings; returns the keys that need a restart."""
@@ -812,7 +829,8 @@ class Assistant:
             nonlocal shown
             if not shown and screen.strip():
                 shown = True
-                self.ui.show_deck(Deck(title=title, cards=[Card("", screen.strip(), "")], done=True))
+                self.ui.show_deck(Deck(title=title, cards=[Card("", screen.strip(), "")], done=True,
+                                       linger=reading_time(screen)))
 
         notes: list[str] = []
         use_reaction = reply.reaction and (reply.reaction != "ok" or self.cfg.voice.ok_for_actions)
@@ -876,7 +894,10 @@ class Assistant:
 
             def open_window() -> None:
                 if self.listener and self.listener.mode is Mode.WAIT and self.state is not State.MUTED:
-                    self.listener.to_await(self.cfg.assistant.hot_window_sec, source)
+                    # With echo cancellation the last moments of audio are the user, not Jarvis's echo: a phrase
+                    # begun right as he finished is kept from its first word instead of being cut.
+                    clean = bool(self.mic and self.mic.aec is not None)
+                    self.listener.to_await(self.cfg.assistant.hot_window_sec, source, resume=clean)
                     self._set_state(State.LISTENING, "можно без «Джарвис»")
             asyncio.get_running_loop().call_later(0.25, open_window)
         elif self.state is not State.MUTED:

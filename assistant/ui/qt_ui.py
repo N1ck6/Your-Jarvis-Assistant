@@ -424,6 +424,7 @@ class DeckWindow(GlassWindow):
         self.setFixedWidth(self.WIDTH)
         self.deck: Deck | None = None
         self.index = 0
+        self.default_linger = linger_sec
         self._close_timer = QTimer(self, singleShot=True, interval=int(linger_sec * 1000))
         self._close_timer.timeout.connect(self._time_up)
         self._timed_out = False
@@ -440,6 +441,7 @@ class DeckWindow(GlassWindow):
             QLabel#heading { font: 600 15pt 'Segoe UI'; color: #FFFFFF; }
             QLabel#body { font: 11pt 'Segoe UI'; color: #D6DCE6; }
             QLabel#counter { color: #7D8BA0; font: 9pt 'Segoe UI'; }
+            QLabel#pin { color: #D9A62E; font: 9pt 'Segoe UI'; }
             QPushButton { background: rgba(255,255,255,0.08); color: #E8ECF3; border: none; border-radius: 8px;
                           padding: 4px 10px; font: 11pt 'Segoe UI'; }
             QPushButton:hover { background: rgba(255,255,255,0.18); }
@@ -457,6 +459,10 @@ class DeckWindow(GlassWindow):
         self.body.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.counter = QLabel(objectName="counter")
         self.prev_btn, self.next_btn, close_btn = QPushButton("‹"), QPushButton("›"), QPushButton("✕")
+        close_btn.setToolTip("Закрыть")
+        self.pin_mark = QLabel("закреплено", objectName="pin")
+        self.pin_mark.setToolTip("Эта карточка не исчезнет сама — закройте её крестиком")
+        self.pin_mark.hide()
         self.copy_btn = QPushButton("Копировать")
         self.copy_btn.setToolTip("Скопировать текст карточки")
         self.prev_btn.clicked.connect(lambda: self._user_nav(self.index - 1))
@@ -466,6 +472,7 @@ class DeckWindow(GlassWindow):
 
         top = QHBoxLayout()
         top.addWidget(self.title, 1)
+        top.addWidget(self.pin_mark)
         top.addWidget(close_btn)
         bottom = QHBoxLayout()
         bottom.addWidget(self.counter, 1)
@@ -562,6 +569,7 @@ class DeckWindow(GlassWindow):
         self.title.setText(html.escape(_caps(deck.title)))
         self._close_timer.stop()
         self._timed_out = False
+        self.pin_mark.setVisible(deck.pinned)
         if deck.cards:
             self.show_card(0)
         else:
@@ -573,7 +581,16 @@ class DeckWindow(GlassWindow):
         self.show()
         self._place()
         if deck.done:
-            self._close_timer.start()
+            self._start_close()
+
+    def _start_close(self) -> None:
+        """The read-time countdown; a pinned card has none (only ✕ closes it)."""
+        if self.deck is not None and self.deck.pinned:
+            self._close_timer.stop()
+            return
+        linger = self.deck.linger if self.deck is not None and self.deck.linger > 0 else self.default_linger
+        self._close_timer.setInterval(int(linger * 1000))
+        self._close_timer.start()
 
     def update_deck(self, deck: Deck) -> None:
         if self.deck is None:
@@ -582,7 +599,7 @@ class DeckWindow(GlassWindow):
         self.title.setText(html.escape(_caps(deck.title)))
         self._update_counter()
         if deck.done:
-            self._close_timer.start()
+            self._start_close()
 
     def _update_counter(self) -> None:
         many = bool(self.deck and len(self.deck.cards) > 1)
@@ -613,7 +630,7 @@ class DeckWindow(GlassWindow):
             self.show()
         self._place()
         if manual or (self.deck.done and index == len(self.deck.cards) - 1):
-            self._close_timer.start()
+            self._start_close()
 
     def fade_out(self) -> None:
         self._close_timer.stop()
@@ -1101,7 +1118,9 @@ class QtUi(QObject):
         self._mute_action = QAction("Выключить микрофон")
         self._state.connect(self._on_state)
         self._notify.connect(lambda t, m: self.tray.showMessage(t, m, state_icon(State.SPEAKING), 8000))
-        self._show_deck.connect(self.window.set_deck)
+        self._linger = linger_sec
+        self.pinned: list[DeckWindow] = []
+        self._show_deck.connect(self._route_deck)
         self._update_deck.connect(self.window.update_deck)
         self._show_card.connect(self.window.show_card)
         self._close_deck.connect(self.window.fade_out)
@@ -1121,6 +1140,27 @@ class QtUi(QObject):
 
     def show_deck(self, deck: Deck) -> None:
         self._show_deck.emit(copy.deepcopy(deck))
+
+    def _route_deck(self, deck: Deck) -> None:
+        """Ordinary cards share one window (the next answer replaces the last one); a pinned card gets a window of
+        its own that stays until ✕."""
+        if not deck.pinned:
+            self.window.set_deck(deck)
+            return
+        win = DeckWindow(self._linger)
+        win.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self.pinned.append(win)
+        PANELS.add(win)
+
+        def closed(w: DeckWindow = win) -> None:
+            if w in self.pinned:
+                self.pinned.remove(w)
+            if w in PANELS.windows:
+                PANELS.windows.remove(w)
+            w.close()
+            PANELS.arrange()
+        win.on_user_close = lambda: QTimer.singleShot(260, closed)  # after the fade-out
+        win.set_deck(deck)
 
     def update_deck(self, deck: Deck) -> None:
         self._update_deck.emit(copy.deepcopy(deck))

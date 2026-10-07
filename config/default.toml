@@ -28,6 +28,11 @@ await_command_sec = 6.0
 pre_roll_ms = 400
 earcons = true
 earcon_volume = 0.25
+# The microphone stops hearing Jarvis himself: "Джарвис, …" said over his answer is heard and the command is not
+# drowned in his voice (scripts/bargein_bench.py: 62% -> 90-95% caught at equal loudness).
+echo_cancellation = true
+# While the user talks over Jarvis, his voice drops to this share until the user is done (1 = never).
+talk_over_volume = 0.3
 
 [wake]
 engine = "vosk"
@@ -91,13 +96,13 @@ cloud_history_turns = 1
 # Lite first: ~0.8 s answers; "flash-latest" is often overloaded (503) on the free tier.
 models = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 web_search = true
-max_output_tokens = 400
+max_output_tokens = 1000
 
 [llm.groq]
 models = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 web_search = true
-# Voice answers are short; a low cap saves tokens (gpt-oss reasoning is also counted here).
-max_output_tokens = 400
+# The spoken part is short; the cap leaves room for the card after ### (gpt-oss reasoning is also counted here).
+max_output_tokens = 1000
 
 [llm.local]
 host = "http://127.0.0.1:11434"

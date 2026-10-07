@@ -52,11 +52,17 @@ class VoskWake:
         phrases = known
         decoys = [d for d in decoys if self._model.vosk_model_find_word(d.lower()) >= 0 and d not in phrases]
         self._wake = _GrammarSpotter(self._model, phrases, decoys, sr)
+        # The same wake word in the raw microphone signal (before echo cancellation), used while Jarvis talks:
+        # the canceller mutes the first ~0.3 s of the user's voice when both speak, and the name is said first.
+        self._wake_raw = _GrammarSpotter(self._model, phrases, decoys, sr)
         self._stop = _GrammarSpotter(self._model, stop_words, [], sr)
         log.info("Wake word: %s", ", ".join(phrases))
 
     def feed_wake(self, pcm: bytes) -> bool:
         return self._wake.feed(pcm) is not None
+
+    def feed_wake_raw(self, pcm: bytes) -> bool:
+        return self._wake_raw.feed(pcm) is not None
 
     def feed_stop(self, pcm: bytes) -> str | None:
         """Returns the stop word heard, if any."""
@@ -65,3 +71,6 @@ class VoskWake:
     def reset(self) -> None:
         self._wake.reset()
         self._stop.reset()
+
+    def reset_raw(self) -> None:
+        self._wake_raw.reset()

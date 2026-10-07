@@ -110,3 +110,26 @@ def test_windows_line_up_beside_a_dragged_one(qapp):
     vis.show_visual(visuals.Visual("y = 1/x", plot={"expr": "1/x", "label": "y = 1/x", "x": [-6, 6]}))
     qapp.processEvents()
     assert not vis.frameGeometry().intersects(deck.frameGeometry())
+
+
+def test_answer_cards_stay_long_enough_to_read():
+    from assistant.core import reading_time
+
+    assert reading_time("Коротко.") == 45
+    assert 60 <= reading_time(" ".join(["слово"] * 80)) <= 80
+    assert reading_time(" ".join(["слово"] * 1000)) == 150
+
+
+def test_pinned_card_has_no_timer_and_its_own_window(qapp):
+    from assistant.ui.qt_ui import QtUi
+
+    ui = QtUi(25)
+    ui._route_deck(Deck("Ответ", [Card("", "- обычный", "")], done=True, linger=50))
+    assert ui.window._close_timer.isActive() and ui.window._close_timer.interval() == 50000
+    ui._route_deck(Deck("Перевод", [Card("", "- важное", "")], done=True, pinned=True))
+    pinned = ui.pinned[0]
+    assert pinned is not ui.window and not pinned._close_timer.isActive() and pinned.pin_mark.isVisible()
+    ui._route_deck(Deck("Следующий ответ", [Card("", "- новое", "")], done=True))
+    assert pinned.deck.title == "Перевод" and pinned.isVisible()        # the next answer did not replace it
+    pinned.on_user_close()
+    QApplication.processEvents()

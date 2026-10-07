@@ -39,6 +39,8 @@ class AudioCfg(BaseModel):
     pre_roll_ms: int = 400
     earcons: bool = True
     earcon_volume: float = 0.25
+    echo_cancellation: bool = True   # the microphone does not hear Jarvis himself (WebRTC AEC3)
+    talk_over_volume: float = 0.3    # Jarvis's voice while the user talks over him (1 = do not turn down)
 
 
 class WakeCfg(BaseModel):
@@ -76,7 +78,7 @@ class VoicePackCfg(BaseModel):
 class CloudCfg(BaseModel):
     models: list[str] = Field(default_factory=list)
     web_search: bool = True
-    max_output_tokens: int = 500
+    max_output_tokens: int = 1000
 
 
 class LocalLlmCfg(BaseModel):

@@ -56,6 +56,9 @@ class ListenerEvents:
     on_speech_start: Callable[[], None]
     on_utterance: Callable[[Utterance], None]
     on_await_timeout: Callable[[], None]
+    # The user started (True) / stopped (False) talking while Jarvis talks: Jarvis turns his voice down so the
+    # rest of the phrase is heard over less echo. Needs echo cancellation (the raw signal is Jarvis himself).
+    on_talk_over: Callable[[bool], None] | None = None
 
 
 class ListenerCore:
@@ -83,6 +86,15 @@ class ListenerCore:
 
         self.mode = Mode.WAIT
         self.assistant_speaking = False
+        self._raw_active = False
+        self._history: collections.deque[np.ndarray] = collections.deque(maxlen=int(2.5 / self.frame_sec))
+        # Voice activity in the cleaned signal over the last second (frames): a raw wake word needs some.
+        self._near_voiced: collections.deque[bool] = collections.deque(maxlen=int(1.0 / self.frame_sec))
+        self.near_min = 3
+        self.near_rms = 330.0   # int16 RMS, about -40 dBFS
+        self._talk_over = False
+        self._talk_over_quiet = 0
+        self._talk_over_release = int(1.5 / self.frame_sec)
         self._lock = threading.RLock()
         self._segment: collections.deque[np.ndarray] = collections.deque(maxlen=self.segment_cap)
         self._in_speech = False
@@ -194,10 +206,38 @@ class ListenerCore:
         self._capture_source = source
 
     # --- processing (listener thread) ---
-    def process(self, frame: np.ndarray) -> None:
+    def process(self, frame: np.ndarray, raw: np.ndarray | None = None) -> None:
+        """frame: the microphone after echo cancellation (or as is). raw: the same audio before it, if the canceller
+        runs: while Jarvis talks, the wake word is also looked for there (the canceller mutes the start of the
+        user's phrase when both speak, and "Джарвис" comes first)."""
         prob = self.vad(frame)
         voiced = prob >= self.th
         with self._lock:
+            self._history.append(frame)
+            # Echo left after cancellation is ~-55 dB; a voice the canceller muted at the start of double talk is
+            # still well above that even when the VAD misses it.
+            near = voiced or float(np.sqrt(np.mean(frame.astype(np.float32) ** 2))) > self.near_rms
+            self._near_voiced.append(near)
+            if raw is not None:
+                self._track_talk_over(near)
+            if raw is not None and self.mode is Mode.WAIT:
+                if self.assistant_speaking:
+                    self._raw_active = True
+                    # The raw signal is mostly Jarvis himself: his own words may sound like the name. A real call
+                    # leaves a voice in the cleaned signal too (the canceller removes only Jarvis).
+                    if self.wake.feed_wake_raw(raw.tobytes()) and sum(self._near_voiced) >= self.near_min:
+                        log.info("Кодовое слово (до эхоподавления)")
+                        # The name and what followed it, from the cleaned signal: Jarvis's voice is not in it.
+                        segment = list(self._history)[-int(2.0 / self.frame_sec):]
+                        self._reset_segment()
+                        self.wake.reset_raw()
+                        self._start_capture(segment, "wake", barge_in=True)
+                        self.ev.on_wake()
+                        self.pre_roll.append(frame)
+                        return
+                elif self._raw_active:
+                    self._raw_active = False
+                    self.wake.reset_raw()
             if self.mode is Mode.WAIT:
                 self._process_wait(frame, voiced)
             elif self.mode is Mode.CAPTURE:
@@ -207,6 +247,23 @@ class ListenerCore:
             elif self.mode is Mode.DICTATE:
                 self._process_dictate(frame, voiced)
             self.pre_roll.append(frame)
+
+    def _track_talk_over(self, near: bool) -> None:
+        """A voice in the cleaned signal while Jarvis talks: tell the assistant (it turns Jarvis down) after ~100 ms
+        of it; all clear after 1.5 s of quiet or when Jarvis stops."""
+        recent = list(self._near_voiced)[-int(0.2 / self.frame_sec):]
+        if self.assistant_speaking and sum(recent) >= self.near_min:
+            self._talk_over_quiet = 0
+            if not self._talk_over:
+                self._talk_over = True
+                if self.ev.on_talk_over is not None:
+                    self.ev.on_talk_over(True)
+        elif self._talk_over:
+            self._talk_over_quiet += 1
+            if not self.assistant_speaking or self._talk_over_quiet >= self._talk_over_release:
+                self._talk_over = False
+                if self.ev.on_talk_over is not None:
+                    self.ev.on_talk_over(False)
 
     def _process_wait(self, frame: np.ndarray, voiced: bool) -> None:
         if voiced:
@@ -303,13 +360,14 @@ class ListenerCore:
 class Microphone:
     """Owns the input stream and a worker thread that runs ListenerCore."""
 
-    def __init__(self, core: ListenerCore, device: str = "", sr: int = 16000) -> None:
+    def __init__(self, core: ListenerCore, device: str = "", sr: int = 16000, aec=None) -> None:
         self.core = core
         self.sr = sr
+        self.aec = aec      # assistant.audio.aec.EchoCanceller or None
         self.device_spec = device
         self.device = resolve_device(device, "input")
         self.last_frame = time.monotonic()
-        self._q: queue.Queue[np.ndarray] = queue.Queue(maxsize=300)
+        self._q: queue.Queue[tuple[float, np.ndarray]] = queue.Queue(maxsize=300)
         self._stream: sd.InputStream | None = None
         self._thread: threading.Thread | None = None
         self._running = False
@@ -318,23 +376,34 @@ class Microphone:
     def paused(self) -> bool:
         return self._stream is None
 
-    def _callback(self, indata, _frames, _time, status) -> None:
+    def _callback(self, indata, _frames, ptime, status) -> None:
         if status and status.input_overflow:
             log.debug("input overflow")
-        self.last_frame = time.monotonic()
+        now = time.monotonic()
+        self.last_frame = now
+        # When the first sample reached the microphone, on the monotonic clock the echo canceller uses.
         try:
-            self._q.put_nowait(indata[:, 0].copy())
+            captured = now - (ptime.currentTime - ptime.inputBufferAdcTime) if ptime.inputBufferAdcTime else now
+        except Exception:
+            captured = now
+        if not 0 <= now - captured < 1:
+            captured = now - FRAME / self.sr
+        try:
+            self._q.put_nowait((captured, indata[:, 0].copy()))
         except queue.Full:
             pass  # worker is behind; dropping audio is better than growing memory
 
     def _worker(self) -> None:
         while self._running:
             try:
-                frame = self._q.get(timeout=0.5)
+                captured, frame = self._q.get(timeout=0.5)
             except queue.Empty:
                 continue
             try:
-                self.core.process(frame)
+                if self.aec is not None:
+                    self.core.process(self.aec.process(frame, captured), raw=frame)
+                else:
+                    self.core.process(frame)
             except Exception:
                 log.exception("Ошибка обработки аудио")
 
@@ -349,6 +418,8 @@ class Microphone:
         if self._stream is not None:
             return
         self.core.to_wait()
+        if self.aec is not None:
+            self.aec.restart()
         GATE.__enter__()  # held while the stream is open: device re-reads wait for it to close
         try:
             self._stream = sd.InputStream(samplerate=self.sr, channels=1, dtype="int16", blocksize=FRAME,

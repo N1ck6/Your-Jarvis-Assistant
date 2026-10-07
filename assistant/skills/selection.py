@@ -86,7 +86,7 @@ class SelectionSkill(Skill):
             return Reply("Готово.", reaction="ok", listen_after=False)
         # translate
         await run_blocking(winutil.set_clipboard_text, result)
-        self.app.ui.show_deck(Deck(title=f"Перевод · {lang}", cards=[Card("", result, "")], done=True))
+        self.app.ui.show_deck(Deck(title=f"Перевод · {lang}", cards=[Card("", result, "")], done=True, pinned=True))
         if lang == "русский" and len(result) < 400:
             return Reply(result, listen_after=False)
         return Reply("Перевод на экране и в буфере обмена.", listen_after=False)

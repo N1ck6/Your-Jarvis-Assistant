@@ -53,6 +53,9 @@ class MusicPlayer:
         self._stream = None
         self._lock = threading.RLock()
         self._device: miniaudio.PlaybackDevice | None = None
+        from assistant.audio.aec import REFERENCE
+
+        self._ref = REFERENCE.stream()   # what the music sends to the speakers, for the echo canceller
 
     # ------------------------------------------------------------------ public API
     @property
@@ -163,6 +166,7 @@ class MusicPlayer:
                     if len(data):
                         gain = self.volume * (self.duck_volume if self._ducked else 1.0)
                         out = np.frombuffer(data, dtype=np.float32) * gain
+                        self._ref.write(out.reshape(-1, CHANNELS).mean(axis=1), SR)   # for the echo canceller
                         return array.array("f", out.astype(np.float32).tobytes())
                 except StopIteration:
                     pass

@@ -79,6 +79,7 @@ class Player:
         self.device_spec = device
         self.device = resolve_device(device, "output")
         self.volume = volume
+        self.duck = 1.0          # live share of the volume: lowered while the user talks over Jarvis
         self.on_level = on_level
         self._stop = threading.Event()
         self._lock = threading.Lock()  # one speech clip at a time
@@ -94,14 +95,18 @@ class Player:
         """Blocks until the clip ends. Returns False if interrupted."""
         with self._lock:
             self._stop.clear()
-            return self._run(clip, self._stop, self.volume, self.on_level)
+            return self._run(clip, self._stop, self.volume, self.on_level, duckable=True)
 
     def effect(self, clip: AudioClip, volume: float) -> None:
         """Fire-and-forget sound (earcons); does not interrupt speech."""
         threading.Thread(target=self._run, args=(clip, threading.Event(), volume, None), daemon=True).start()
 
-    def _run(self, clip: AudioClip, stop: threading.Event, volume: float, on_level) -> bool:
+    def _run(self, clip: AudioClip, stop: threading.Event, volume: float, on_level, duckable: bool = False) -> bool:
+        """duckable: speech, turned down while the user talks over it; cues keep their volume."""
+        from assistant.audio.aec import REFERENCE
+
         data = np.clip(clip.samples.astype(np.float32) * volume, -1.0, 1.0)
+        ref = REFERENCE.stream()   # what goes to the speakers, for the echo canceller
         pos = 0
         done = threading.Event()
         interrupted = False
@@ -113,8 +118,12 @@ class Player:
                 outdata.fill(0)
                 raise sd.CallbackStop
             chunk = data[pos:pos + frames]
+            if duckable and self.duck < 1.0:
+                chunk = chunk * self.duck
             n = len(chunk)
             outdata[:n, 0] = chunk
+            if n:
+                ref.write(chunk, clip.sr)
             if n < frames:
                 outdata[n:, 0] = 0
             pos += n

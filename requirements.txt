@@ -20,6 +20,9 @@ av>=12                     # FFmpeg decoder for music miniaudio cannot read (AAC
 # Light Jarvis voice (Piper, ONNX on the CPU; GPL-3, used only when that voice is selected)
 piper-tts>=1.8,<2
 
+# Echo cancellation (WebRTC AEC3 from the livekit package, Apache-2.0): Jarvis can be interrupted mid-answer
+livekit>=1.0,<2
+
 # STT (GigaAM via ONNX)
 onnx-asr[hub]>=0.7
 

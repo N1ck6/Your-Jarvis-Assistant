@@ -41,6 +41,15 @@ class Deck:
     title: str
     cards: list[Card] = field(default_factory=list)
     done: bool = False  # False while cards are still streaming in
+    linger: float = 0.0  # seconds on screen after the last card; 0 = the default ([explain] linger_sec)
+    # Important results (a translation, text from the screen, found files, a browser task): the card stays until ✕,
+    # in a window of its own, so the next answer does not replace it.
+    pinned: bool = False
+
+
+def reading_time(text: str) -> float:
+    """How long an answer card stays: enough to read it at a calm pace, 45 s to 2.5 min."""
+    return max(45.0, min(150.0, 30.0 + 0.5 * len(text.split())))
 
 
 class UiPort(Protocol):

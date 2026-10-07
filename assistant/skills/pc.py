@@ -232,7 +232,7 @@ class PcSkill(Skill):
         lines = [f"- {f.path.name}  ·  {fsaccess.human_size(f.size)}  ·  {dt.datetime.fromtimestamp(f.mtime):%d.%m %H:%M}"
                  for f in items]
         name = fsaccess.display_name(folder)
-        self.app.ui.show_deck(Deck(title=f"Последнее: {name}", cards=[Card("", "\n".join(lines), "")], done=True))
+        self.app.ui.show_deck(Deck(title=f"Последнее: {name}", cards=[Card("", "\n".join(lines), "")], done=True, pinned=True))
         head = ", ".join(f.path.stem for f in items[:3])
         return Reply(f"Последнее {fsaccess.spoken_place(folder)}: {head}. Список на экране.",
                      tool_result="\n".join(f.path.name for f in items))
@@ -254,7 +254,7 @@ class PcSkill(Skill):
             return Reply(f"Файл «{name}» в разрешённых папках не нашёл.", tool_result="не найдено")
         self.found = items
         lines = [f"{i + 1}. {f.path.name}\n   {f.path.parent}" for i, f in enumerate(items)]
-        self.app.ui.show_deck(Deck(title=f"Поиск: {name}", cards=[Card("", "\n".join(lines), "")], done=True))
+        self.app.ui.show_deck(Deck(title=f"Поиск: {name}", cards=[Card("", "\n".join(lines), "")], done=True, pinned=True))
         first = items[0].path
         more = f" И ещё {len(items) - 1} на экране." if len(items) > 1 else ""
         return Reply(f"Нашёл {first.name} в папке {first.parent.name}.{more} Скажите «открой его».",

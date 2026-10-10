@@ -18,6 +18,7 @@ models/*
 # Local documents and archive of old projects
 docs/
 _to_delete/
+to_delete/
 
 .vscode/
 .idea/

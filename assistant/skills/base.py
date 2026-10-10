@@ -41,6 +41,8 @@ class Reply:
     reaction: str = ""
     # Dangerous action: `speech` asks the question, `confirm` runs after the user says "да".
     confirm: Callable[[], Awaitable["Reply"]] | None = None
+    # Runs when the answer to `confirm` is "нет", another phrase or nothing at all (the browser agent waits for it).
+    deny: Callable[[], Awaitable["Reply"]] | None = None
     # The phrase looked like this skill's command but it cannot serve it ("открой что-нибудь послушать"):
     # the brain asks the router first and speaks this reply only if the router has nothing better.
     fallthrough: bool = False

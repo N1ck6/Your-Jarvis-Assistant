@@ -484,6 +484,16 @@ class Assistant:
         self.listener.to_await(self.cfg.audio.await_command_sec)
         self._set_state(State.LISTENING)
 
+    def wake_up(self) -> None:
+        """The same as saying "Джарвис" alone (the browser extension's button): "Да, сэр" and wait for the command."""
+        if not self.listener:
+            return
+        if self.mic and self.mic.paused:
+            self.set_muted(False)
+        self.interrupt()
+        self._earcon(earcons.WAKE)
+        self.submit(self._bare_wake())
+
     def _skill(self, name: str):
         return next((s for s in self.skills if s.name == name), None)
 
@@ -517,6 +527,31 @@ class Assistant:
         await self.speaker.say(text)
         if self.state is State.SPEAKING:
             self._set_state(State.IDLE)
+
+    async def ask_yes_no(self, question: str, timeout: float = 45.0) -> bool | None:
+        """A question from background work (the browser agent): spoken, then "да" / "нет" is heard without the name
+        (or later with it). None: no answer in time, or the user went on to something else."""
+        answer: asyncio.Future = asyncio.get_running_loop().create_future()
+
+        async def yes() -> Reply:
+            if not answer.done():
+                answer.set_result(True)
+            return Reply("Выполняю.", listen_after=False)
+
+        async def no() -> Reply:
+            if not answer.done():
+                answer.set_result(False)
+            return Reply("Хорошо, не буду.", listen_after=False)
+
+        self.brain.pending = (yes, time.monotonic() + timeout, no)
+        await self.announce(question)
+        self._after_answer(False, expect_answer=True)
+        try:
+            return await asyncio.wait_for(asyncio.shield(answer), timeout)
+        except asyncio.TimeoutError:
+            if self.brain.pending is not None and self.brain.pending[0] is yes:
+                self.brain.pending = None
+            return None
 
     # ------------------------------------------------------------------ dictation
     def start_dictation(self, until_pause: bool, paste: Callable[[str], None]) -> bool:

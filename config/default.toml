@@ -131,7 +131,7 @@ allow_cmd = true
 
 [skills]
 # Order matters: the first module whose phrase matches wins. User scenarios go first.
-enabled = ["scenarios", "calc", "visual", "system", "power", "media", "music", "dictation", "selection", "screen", "notes", "windows",
+enabled = ["scenarios", "calc", "visual", "system", "power", "web", "media", "music", "dictation", "selection", "screen", "notes", "windows",
            "search", "timers", "focus", "voiceprint", "memory", "briefing", "news", "agenda", "pc", "explain", "voice", "weather", "apps"]
 
 [apps]
@@ -179,6 +179,20 @@ rounds = 4
 [search]
 default = "yandex"
 engines = { "yandex" = "https://yandex.ru/search/?text={q}", "google" = "https://www.google.com/search?q={q}", "youtube" = "https://www.youtube.com/results?search_query={q}", "wiki" = "https://ru.wikipedia.org/w/index.php?search={q}", "maps" = "https://yandex.ru/maps/?text={q}", "market" = "https://market.yandex.ru/search?text={q}" }
+
+[web]
+# Browser agent: "найди на озоне …", "перескажи эту статью", "каждый день проверяй цену …".
+# Needs the extension from browser_extension/ (README → «Браузер»).
+enabled = true
+port = 8771
+# minimized: the agent's window opens minimized and never covers yours | background: a normal window behind yours
+window = "minimized"
+# Planning, reading pages and the final answer (Gemini Flash); routine steps go to the local model.
+think_models = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+max_steps = 20
+timeout_sec = 240
+# Captcha or login: how long to wait for you before giving up.
+handover_wait_sec = 180
 
 [explain]
 provider = "local"

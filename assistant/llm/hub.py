@@ -65,8 +65,9 @@ class LlmHub:
                 and not self._over_budget(n)]
 
     async def stream(self, chain: list[str], messages: list[Msg], *, web: bool,
-                     max_tokens: int | None = None) -> AsyncIterator[str]:
-        """Yields deltas from the first provider that starts answering."""
+                     max_tokens: int | None = None, models: dict[str, list[str]] | None = None) -> AsyncIterator[str]:
+        """Yields deltas from the first provider that starts answering.
+        models: {provider: [model, ...]} to use instead of that provider's configured models."""
         for provider in self._usable(chain):
             started = False
             provider.last_usage = (0, 0)
@@ -74,8 +75,9 @@ class LlmHub:
             if web and not provider.can_search():
                 # Without search the model would invent today's rates and scores from its training data.
                 msgs = [Msg("system", OFFLINE_NOTE), *messages]
+            extra = {"models": models[provider.name]} if models and models.get(provider.name) else {}
             try:
-                async for delta in provider.stream(msgs, web=web, max_tokens=max_tokens):
+                async for delta in provider.stream(msgs, web=web, max_tokens=max_tokens, **extra):
                     if not started:
                         started = True
                         self.last_provider = provider.name
@@ -100,6 +102,7 @@ class LlmHub:
                 return  # failed mid-answer: keep what was said, do not start over
         yield FAIL_TEXT
 
-    async def complete(self, chain: list[str], messages: list[Msg], *, web: bool, max_tokens: int | None = None) -> str:
-        parts = [d async for d in self.stream(chain, messages, web=web, max_tokens=max_tokens)]
+    async def complete(self, chain: list[str], messages: list[Msg], *, web: bool, max_tokens: int | None = None,
+                       models: dict[str, list[str]] | None = None) -> str:
+        parts = [d async for d in self.stream(chain, messages, web=web, max_tokens=max_tokens, models=models)]
         return "".join(parts).strip()

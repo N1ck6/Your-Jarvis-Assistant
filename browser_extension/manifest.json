@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Джарвис — браузер",
+  "short_name": "Джарвис",
+  "version": "1.0.0",
+  "description": "Связь голосового ассистента Джарвис с браузером: ищет, читает и сравнивает на сайтах в отдельном окне. Работает только с Джарвисом на этом компьютере (127.0.0.1).",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs4gIxDH+cKmaaB2f9rPigesUhswBTZosII0FLZ0d3gA/MLpz9rCplGZiD7VAi0XfwcfeTmJl/sHU30hMJuifmd/axXPrhcgzQEVeyj/cnwEo4+HrM2UGTVEDe4Mpt3yodVG/yc47ohuVsTJuuTrNmvZrgv10LJhqn9wbLq86fRvrE1PDUy8AsVfktgOogC+Yq8xH5EnOki5LubfJdwLklClV2MCsX4iorna9pzCRGqE5sql57ZJUNOF6uVTUySBdH2a5ORBzLgyLFc8/i6poCtEpc7AztwYjdlVmc131QalqBRU1c81EA2NWnky7IQQE4eMOyVeMka93eRhkXRbjFQIDAQAB",
+  "minimum_chrome_version": "116",
+  "background": {"service_worker": "background.js"},
+  "permissions": ["scripting", "tabs", "alarms", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "action": {"default_title": "Джарвис: нет связи"}
+}

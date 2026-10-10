@@ -101,6 +101,15 @@ SECTIONS: list[tuple[str, list[F]]] = [
         F("explain.max_cards", "Карточек в объяснении, до", "number", "", 4, 8, 1),
         F("explain.linger_sec", "Окно объяснения закрывается через, с", "number", "", 5, 120, 5),
     ]),
+    ("Браузер", [
+        F("web.enabled", "Браузерный агент", "bool",
+          "«найди на озоне…», «перескажи эту статью»; нужно расширение — «Джарвис, подключи браузер»", restart=True),
+        F("web.window", "Окно агента", "select", "где агент открывает сайты",
+          options=[["minimized", "Свёрнутое — не мешает"], ["background", "Обычное, позади ваших окон"]]),
+        F("web.max_steps", "Шагов на задачу, до", "number", "", 5, 40, 1),
+        F("web.timeout_sec", "Время на задачу, с", "number", "", 60, 600, 30),
+        F("web.handover_wait_sec", "Ждать вас на капче или входе, с", "number", "", 30, 600, 30),
+    ]),
     ("Клавиши", [
         F("ui.hotkey_listen", "Слушать без «Джарвис»", "hotkey", restart=True),
         F("ui.hotkey_mute", "Микрофон вкл/выкл", "hotkey", restart=True),

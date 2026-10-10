@@ -79,8 +79,10 @@ class Provider(ABC):
         return False
 
     @abstractmethod
-    def stream(self, messages: list[Msg], *, web: bool, max_tokens: int | None = None) -> AsyncIterator[str]:
-        """Yields text deltas. Must raise before the first delta if the request fails."""
+    def stream(self, messages: list[Msg], *, web: bool, max_tokens: int | None = None,
+               models: list[str] | None = None) -> AsyncIterator[str]:
+        """Yields text deltas. Must raise before the first delta if the request fails.
+        models: try these models instead of the configured ones (the browser agent plans with Gemini Flash)."""
 
 
 # --------------------------------------------------------------------------- Gemini
@@ -129,7 +131,8 @@ class GeminiProvider(Provider):
             kwargs["thinking_config"] = types.ThinkingConfig(thinking_level="low")
         return types.GenerateContentConfig(**kwargs)
 
-    async def stream(self, messages: list[Msg], *, web: bool, max_tokens: int | None = None) -> AsyncIterator[str]:
+    async def stream(self, messages: list[Msg], *, web: bool, max_tokens: int | None = None,
+                     models: list[str] | None = None) -> AsyncIterator[str]:
         from google.genai import errors, types
 
         client = self._get_client()
@@ -143,7 +146,7 @@ class GeminiProvider(Provider):
                 parts.append(types.Part(text=m.content))
             contents.append(types.Content(role="model" if m.role == "assistant" else "user", parts=parts))
         last_exc: Exception | None = None
-        for model in self.cfg.models:
+        for model in models or self.cfg.models:
             for _attempt in range(3):
                 searching = web and self.cfg.web_search and self._search_allowed()
                 try:
@@ -206,7 +209,8 @@ class GroqProvider(Provider):
             self._client = AsyncOpenAI(api_key=self.key, base_url=self.BASE_URL, timeout=self._timeout, max_retries=0)
         return self._client
 
-    async def stream(self, messages: list[Msg], *, web: bool, max_tokens: int | None = None) -> AsyncIterator[str]:
+    async def stream(self, messages: list[Msg], *, web: bool, max_tokens: int | None = None,
+                     models: list[str] | None = None) -> AsyncIterator[str]:
         import openai
 
         client = self._get_client()
@@ -215,7 +219,7 @@ class GroqProvider(Provider):
         quota = False
         waits: list[float] = []
         daily = True
-        for model in self.cfg.models:
+        for model in self.cfg.models:   # the override is for Gemini models; Groq keeps its own
             kwargs: dict[str, Any] = {
                 "model": model,
                 "messages": payload,
@@ -335,7 +339,8 @@ class OllamaProvider(Provider):
         except Exception as exc:
             log.debug("Не выгрузил %s: %s", model, exc)
 
-    async def stream(self, messages: list[Msg], *, web: bool = False, max_tokens: int | None = None) -> AsyncIterator[str]:
+    async def stream(self, messages: list[Msg], *, web: bool = False, max_tokens: int | None = None,
+                     models: list[str] | None = None) -> AsyncIterator[str]:
         vision = any(m.images for m in messages)
         model = self.cfg.vision_model if vision else self.cfg.model
         think: bool | None = False

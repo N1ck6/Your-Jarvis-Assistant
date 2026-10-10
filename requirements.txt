@@ -49,6 +49,9 @@ recurring-ical-events>=3.0
 # UI
 PySide6-Essentials>=6.7
 
+# Link to the browser extension (browser agent)
+websockets>=13
+
 # Voice lab web
 fastapi>=0.111
 uvicorn>=0.30

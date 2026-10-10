@@ -177,6 +177,16 @@ class ExplainCfg(BaseModel):
     linger_sec: float = 25
 
 
+class WebCfg(BaseModel):
+    enabled: bool = True
+    port: int = 8771                  # the extension connects here (browser_extension/background.js)
+    window: str = "minimized"         # minimized | background: how the agent's window opens
+    think_models: list[str] = Field(default_factory=lambda: ["gemini-flash-latest", "gemini-flash-lite-latest"])
+    max_steps: int = 20
+    timeout_sec: float = 240
+    handover_wait_sec: float = 180    # captcha / login: how long to wait for the user
+
+
 class UiCfg(BaseModel):
     tray: bool = True
     hotkey_listen: str = "<ctrl>+<alt>+j"
@@ -218,6 +228,7 @@ class Settings(BaseModel):
     news: NewsCfg = Field(default_factory=NewsCfg)
     focus: FocusCfg = Field(default_factory=FocusCfg)
     search: SearchCfg = Field(default_factory=SearchCfg)
+    web: WebCfg = Field(default_factory=WebCfg)
     ui: UiCfg = Field(default_factory=UiCfg)
     privacy: PrivacyCfg = Field(default_factory=PrivacyCfg)
     voicelab: VoiceLabCfg = Field(default_factory=VoiceLabCfg)

@@ -204,7 +204,7 @@ class Brain:
 
     def _remember_confirm(self, reply: Reply) -> None:
         if reply.confirm is not None:
-            self.pending = (reply.confirm, time.monotonic() + CONFIRM_TTL_SEC)
+            self.pending = (reply.confirm, time.monotonic() + CONFIRM_TTL_SEC, reply.deny)
         if reply.ask is not None:
             self.asking = (reply.ask, time.monotonic() + CONFIRM_TTL_SEC)
 
@@ -254,15 +254,18 @@ class Brain:
         """Answers a pending "are you sure?" question; None if the phrase is something else."""
         if self.pending is None:
             return None
-        action, deadline = self.pending
+        action, deadline, deny = self.pending
         self.pending = None
-        if time.monotonic() > deadline:
-            return None
         norm = normalize_command(text, strip_polite=False)
-        if YES.match(norm):
+        if time.monotonic() <= deadline and YES.match(norm):
             log.info("Подтверждено")
             return await action()
-        if NO.match(norm):
+        said_no = time.monotonic() <= deadline and NO.match(norm)
+        if deny is not None:
+            reply = await deny()
+            if said_no:
+                return reply
+        if said_no:
             return Reply("Отменил.", listen_after=False)
         return None
 

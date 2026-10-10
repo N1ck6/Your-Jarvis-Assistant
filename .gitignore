@@ -7,6 +7,9 @@ __pycache__/
 # Runtime data: settings overrides, timers, logs
 data/
 
+# The browser extension's pairing key (Jarvis writes it on start; each computer has its own)
+browser_extension/pairing.json
+
 # Downloaded models (see scripts/install.ps1)
 models/*
 # The default voice (Jarvis Lite, ~63 MB) ships with the repo; everything else is downloaded by install.bat

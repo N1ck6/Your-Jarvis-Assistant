@@ -185,10 +185,12 @@ engines = { "yandex" = "https://yandex.ru/search/?text={q}", "google" = "https:/
 # Needs the extension from browser_extension/ (README → «Браузер»).
 enabled = true
 port = 8771
-# minimized: the agent's window opens minimized and never covers yours | background: a normal window behind yours
-window = "minimized"
-# Planning, reading pages and the final answer (Gemini Flash); routine steps go to the local model.
-think_models = ["gemini-flash-latest", "gemini-flash-lite-latest"]
+# tab: a new background tab in your browser window, your own tab stays in front; click it to watch the agent |
+# minimized: a window of its own, minimized | background: a window of its own behind yours
+window = "tab"
+# Planning, reading pages and the final answer (Gemini Flash; Lite first — the full Flash often times out on the
+# free tier); routine steps go to the local model.
+think_models = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 max_steps = 20
 timeout_sec = 240
 # Captcha or login: how long to wait for you before giving up.

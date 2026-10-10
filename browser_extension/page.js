@@ -1,7 +1,7 @@
 // Runs inside a page (isolated world): reads what is on it and acts on its elements for Jarvis.
 // Injected again before every call; the second injection is a no-op.
 (() => {
-  if (window.__jarvis && window.__jarvis.v === 1) return;
+  if (window.__jarvis && window.__jarvis.v === 2) return;
 
   const ATTR = "data-jarvis-id";
   const INTERACTIVE = [
@@ -175,6 +175,42 @@
     el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, view: window, ...extra }));
   }
 
+  // The element the agent is about to use gets a glowing frame for a moment: watching its tab, the user sees it.
+  function highlight(el) {
+    const old = [el.style.outline, el.style.outlineOffset, el.style.transition];
+    el.style.transition = "outline-color .2s";
+    el.style.outline = "3px solid #1FD1A5";
+    el.style.outlineOffset = "2px";
+    setTimeout(() => { [el.style.outline, el.style.outlineOffset, el.style.transition] = old; }, 1500);
+  }
+
+  // "Джарвис: ищу наушники…" in the corner of the agent's tab. A closed shadow root keeps it out of the page text
+  // the agent reads, and it never catches clicks.
+  let bannerHost = null;
+  let bannerText = null;
+  function banner({ text = "" } = {}) {
+    if (!text) {
+      if (bannerHost) bannerHost.remove();
+      bannerHost = null;
+      return { ok: true };
+    }
+    if (!bannerHost || !bannerHost.isConnected) {
+      bannerHost = document.createElement("div");
+      bannerHost.style.cssText = "position:fixed;top:12px;right:12px;z-index:2147483647;pointer-events:none";
+      const root = bannerHost.attachShadow({ mode: "closed" });
+      const box = document.createElement("div");
+      box.style.cssText = "font:600 13px 'Segoe UI',sans-serif;color:#E8FFF8;background:rgba(4,16,28,.88);" +
+        "border:1px solid #1FD1A5;border-radius:10px;padding:8px 12px;box-shadow:0 0 14px rgba(31,209,165,.45);" +
+        "max-width:360px";
+      bannerText = document.createElement("span");
+      box.append("Джарвис: ", bannerText);
+      root.append(box);
+      document.documentElement.append(bannerHost);
+    }
+    bannerText.textContent = text;
+    return { ok: true };
+  }
+
   function gone(id) {
     return { ok: false, error: `элемента ${id} уже нет: страница изменилась, нужен свежий снимок` };
   }
@@ -183,6 +219,7 @@
     const el = byId(id);
     if (!el) return gone(id);
     el.scrollIntoView({ block: "center", inline: "center" });
+    highlight(el);
     const a = el.closest("a[href]");
     if (a && a.target === "_blank" && /^https?:/.test(a.href)) return { ok: true, navigate: a.href };
     const r = el.getBoundingClientRect();
@@ -213,6 +250,7 @@
     if (el.type === "password" || SECRET_FIELD.test(hints))
       return { ok: false, error: "пароли, данные карт, коды из СМС и документы вводит только пользователь" };
     el.scrollIntoView({ block: "center" });
+    highlight(el);
     el.focus();
     if (el.isContentEditable) {
       document.execCommand("selectAll");
@@ -283,5 +321,5 @@
     return { ok: true, x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }
 
-  window.__jarvis = { v: 1, snapshot, links, readable, click, type, select, scroll, key, video, center };
+  window.__jarvis = { v: 2, snapshot, links, readable, click, type, select, scroll, key, video, center, banner };
 })();

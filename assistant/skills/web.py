@@ -58,8 +58,8 @@ _READ = re.compile(
 
 _SETUP = re.compile(r"^(?:подключи|установи|настрой|поставь)\s+(?:расширение(?: для)?(?: браузера)?|браузер|"
                     r"связь с браузером|агента браузера|браузерного агента)$|^как подключить (?:браузер|расширение)")
-_SHOW = re.compile(r"^покажи\s+(?:окно\s+)?(?:браузер\w*|агента|что наш[её]л|что нашел в браузере|"
-                   r"результат в браузере|окно агента)$")
+_SHOW = re.compile(r"^покажи\s+(?:окно\s+|вкладку\s+)?(?:браузер\w*|агента|что наш[её]л|что нашел в браузере|"
+                   r"результат в браузере|окно агента|вкладку агента|что ты делаешь(?: в браузере)?)$")
 _HIDE = re.compile(r"^(?:спрячь|сверни|убери)\s+(?:окно\s+)?(?:браузер\w*|агента|окно агента)$")
 _CANCEL = re.compile(r"^(?:останови|отмени|прекрати|прерви|брось|хватит)\s+(?:задачу\s+(?:в\s+)?браузер\w*|поиск\w*|"
                      r"искать|агента|браузерного агента|работу в браузере|что делаешь в браузере)$|^хватит искать$")
@@ -89,7 +89,7 @@ SETUP_CARD = """Один раз, минута:
 `{path}`
 4. Готово: значок «Джарвис» без надписи «off» — связь есть
 - Джарвис должен быть запущен: ключ связи он кладёт в эту папку сам
-- Агент работает в отдельном свёрнутом окне и ваши вкладки только читает — по просьбе
+- Агент работает в своей вкладке рядом с вашей (ваша остаётся впереди), ваши вкладки только читает — по просьбе
 - Пароли, коды, карты, банки и Госуслуги он не трогает; заказ, отправку и удаление — только после вашего «да»"""
 
 
@@ -155,7 +155,7 @@ class WebSkill(Skill):
             log.info("Кнопка Джарвиса в браузере")
             self.app.wake_up()
         elif event == "window_closed" and self.agent is not None and self.agent.cancel():
-            log.info("Окно агента закрыто пользователем — задача остановлена")
+            log.info("Вкладка агента закрыта пользователем — задача остановлена")
 
     # ---------------------------------------------------------------- matching
     def match(self, text: str) -> Intent | None:
@@ -212,7 +212,7 @@ class WebSkill(Skill):
             return await self._setup(already=False)
         if action == "show":
             return Reply(reaction="ok", speech="Показываю.") if await self.agent.show() else \
-                Reply("Окна агента сейчас нет.")
+                Reply("Вкладки агента сейчас нет.")
         if action == "hide":
             await self.agent.hide()
             return Reply(reaction="ok", speech="Свернул.", listen_after=False)
@@ -230,11 +230,9 @@ class WebSkill(Skill):
         if not self.agent.start(task, self._done):
             return Reply(f"Я ещё занят в браузере: {self.agent.status()}. Скажите «останови задачу в браузере», "
                          "если она уже не нужна.")
-        sites = self.agent.routes.mentioned(task)
-        where = f" на {sites[0].name}" if sites and sites[0].kind != "search" else ""
         verb = "Ищу" if re.search(r"\b(найди|поищи|подбери|сравни|узнай|посмотри|выбери)", task.lower()) else "Займусь"
-        return Reply(f"{verb}{where}, сэр. Скажу, когда будет готово.", tool_result="задача запущена в фоне",
-                     listen_after=False)
+        where = (" Вкладка «Джарвис» рядом с вашей — можно смотреть." if self.app.cfg.web.window == "tab" else "")
+        return Reply(f"{verb}, сэр.{where}", tool_result="задача запущена в фоне", listen_after=False)
 
     async def _done(self, outcome: Outcome) -> None:
         self._show_card(outcome)
@@ -248,13 +246,21 @@ class WebSkill(Skill):
             self.app.ui.show_deck(Deck(title=outcome.title, cards=[Card("", card, "")], done=True, pinned=True))
 
     async def _read(self, question: str) -> Reply:
-        try:
-            outcome = await self.agent.read_current(question)
-        except Exception as exc:  # noqa: BLE001 - a bridge or model failure is told, not raised
-            log.warning("Страница не прочитана: %s", exc)
-            return Reply("Не получилось прочитать страницу.")
-        self._show_card(outcome)
-        return Reply(outcome.speech, tool_result=outcome.card[:800] or outcome.speech)
+        """The page the user looks at: "Читаю" at once, the summary when it is ready (a pinned card with the points)."""
+
+        async def speak():
+            yield "Читаю. "
+            try:
+                outcome = await self.agent.read_current(question)
+            except Exception as exc:  # noqa: BLE001 - a bridge or model failure is told, not raised
+                log.warning("Страница не прочитана: %s", exc)
+                yield "Не получилось прочитать страницу."
+                return
+            log.info("Прочитана страница: %s", private(outcome.url))
+            self._show_card(outcome)
+            yield outcome.speech
+
+        return Reply(stream=speak())
 
     async def _setup(self, already: bool) -> Reply:
         from assistant import winutil

@@ -18,7 +18,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from urllib.parse import urlsplit
 
 from assistant.core import State
@@ -249,9 +249,23 @@ class Outcome:
 class Job:
     task: str
     quiet: bool = False            # a scheduled check: no questions, no window coming forward
-    step: str = "планирую"
     started: float = field(default_factory=time.monotonic)
     visited: list[str] = field(default_factory=list)
+    on_step: Callable[[str, int], None] | None = field(default=None, repr=False)
+    steps: int = 0
+    _step: str = "планирую"
+
+    @property
+    def step(self) -> str:
+        return self._step
+
+    @step.setter
+    def step(self, text: str) -> None:
+        """What the agent does now: shown on the extension's icon and in a banner on its tab."""
+        self._step = text
+        self.steps += 1
+        if self.on_step is not None:
+            self.on_step(text, self.steps)
 
 
 class Stop(Exception):
@@ -338,14 +352,17 @@ class WebAgent:
         self.job = job
         t = time.monotonic()
         log.info("Задача в браузере: %s", private(job.task))
+        job.on_step = lambda text, n: self.bridge.notify("progress", text=text, step=n)
+        job.step = "планирую"
         try:
             outcome = await asyncio.wait_for(self._loop(job), self.cfg.timeout_sec)
         except Stop as stop:
             outcome = stop.outcome
         except asyncio.TimeoutError:
-            outcome = Outcome(False, "Не успел за отведённое время. Окно браузера оставил открытым.", show=False)
+            outcome = Outcome(False, "Не успел за отведённое время. Вкладку оставил открытой.", show=False)
         except asyncio.CancelledError:
             log.info("Задача в браузере отменена")
+            self.bridge.notify("progress", text="")
             raise
         except BridgeError as exc:
             outcome = Outcome(False, f"Браузер не дал это сделать: {exc}.")
@@ -354,6 +371,8 @@ class WebAgent:
             outcome = Outcome(False, "Задача в браузере сломалась, подробности в логе.")
         log.info("Браузер: %s за %.0f с, %d стр.: %s", "готово" if outcome.ok else "не вышло", time.monotonic() - t,
                  len(job.visited), private(outcome.speech))
+        job.on_step = None
+        self.bridge.notify("progress", text="")
         return outcome
 
     async def show(self) -> bool:
@@ -549,7 +568,7 @@ class WebAgent:
             if not policy.blocker(fresh)[0]:
                 log.info("Пользователь справился, продолжаю")
                 return
-        raise Stop(Outcome(False, "Не дождался, окно оставил открытым — продолжите сами.", show=True))
+        raise Stop(Outcome(False, "Не дождался, вкладку оставил открытой — продолжите сами.", show=True))
 
     async def _confirm(self, job: Job, what: str) -> None:
         if job.quiet:
@@ -558,7 +577,7 @@ class WebAgent:
         await self.show()
         answer = await self.app.ask_yes_no(f"Мне {what}? Скажите «да» или «нет».")
         if not answer:
-            raise Stop(Outcome(False, "Хорошо, остановился на этом шаге и ничего не нажимал. Окно оставил открытым.",
+            raise Stop(Outcome(False, "Хорошо, остановился на этом шаге и ничего не нажимал. Вкладку оставил открытой.",
                                show=True))
 
     # ------------------------------------------------------------------ reading

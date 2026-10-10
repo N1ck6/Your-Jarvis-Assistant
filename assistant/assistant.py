@@ -341,6 +341,11 @@ class Assistant:
             asyncio.run_coroutine_threadsafe(coro, self.loop)
 
     def _set_state(self, state: State, detail: str = "") -> None:
+        mic = getattr(self, "mic", None)
+        if state is State.IDLE and mic is not None and mic.paused and not getattr(self, "_dictating", False):
+            # "выключи микрофон" is answered aloud, and the end of that answer must not show "Жду «Джарвис»":
+            # the tray icon and its menu item would then say the opposite of the truth.
+            state = State.MUTED
         self.state = state
         # Music steps aside while Jarvis listens, thinks or talks.
         self.music.duck(state in (State.LISTENING, State.THINKING, State.SPEAKING))

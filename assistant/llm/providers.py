@@ -149,10 +149,10 @@ class GeminiProvider(Provider):
         for model in models or self.cfg.models:
             for _attempt in range(3):
                 searching = web and self.cfg.web_search and self._search_allowed()
+                first = True
                 try:
                     cfg = self._config(system, web, max_tokens or self.cfg.max_output_tokens, model)
                     stream = await client.aio.models.generate_content_stream(model=model, contents=contents, config=cfg)
-                    first = True
                     async for chunk in stream:
                         meta = getattr(chunk, "usage_metadata", None)
                         if meta is not None and meta.prompt_token_count:
@@ -179,6 +179,13 @@ class GeminiProvider(Provider):
                         continue
                     log.warning("gemini/%s: %s %s", model, code, str(exc)[:160])
                     break  # 429 / 404 / 5xx: try the next model
+                except (asyncio.TimeoutError, TimeoutError, OSError) as exc:
+                    # The full Flash often hangs on the free tier: the next (lighter) model answers in a second.
+                    if not first:
+                        raise ProviderError(f"gemini/{model}: оборвалось посреди ответа") from exc
+                    last_exc = exc
+                    log.warning("gemini/%s не ответил вовремя, пробую следующую модель", model)
+                    break
         if last_exc is not None and getattr(last_exc, "code", 0) == 429:
             text = str(last_exc)
             raise QuotaError(f"gemini: {last_exc}", parse_wait(text), _is_daily(text))

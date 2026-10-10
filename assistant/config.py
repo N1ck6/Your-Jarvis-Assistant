@@ -180,8 +180,8 @@ class ExplainCfg(BaseModel):
 class WebCfg(BaseModel):
     enabled: bool = True
     port: int = 8771                  # the extension connects here (browser_extension/background.js)
-    window: str = "minimized"         # minimized | background: how the agent's window opens
-    think_models: list[str] = Field(default_factory=lambda: ["gemini-flash-latest", "gemini-flash-lite-latest"])
+    window: str = "tab"               # tab (in the user's window, not activated) | minimized | background
+    think_models: list[str] = Field(default_factory=lambda: ["gemini-flash-lite-latest", "gemini-flash-latest"])
     max_steps: int = 20
     timeout_sec: float = 240
     handover_wait_sec: float = 180    # captcha / login: how long to wait for the user

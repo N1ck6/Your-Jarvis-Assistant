@@ -233,6 +233,9 @@ class FakeBridge:
 
     connected = True
 
+    def notify(self, event, **data):
+        self.calls.append((f"notify:{event}", data))
+
     async def call(self, method, timeout=40, **p):
         self.calls.append((method, p))
         if method == "open":
@@ -321,8 +324,11 @@ def test_agent_reads_results_and_answers(tmp_path):
     agent, app, bridge = make_agent([{"action": "extract", "why": "товары на странице"}], tmp_path=tmp_path)
     outcome = asyncio.run(agent.run(Job("найди на озоне наушники")))
     assert outcome.ok and "Sony" in outcome.speech and "](https://www.ozon.ru/product/sony-1/)" in outcome.card
-    assert bridge.calls[0][0] == "open" and "ozon.ru/search" in bridge.calls[0][1]["url"]
+    opened = next(c for c in bridge.calls if c[0] == "open")
+    assert "ozon.ru/search" in opened[1]["url"] and opened[1]["mode"] == "tab"
     assert not app.questions
+    progress = [c[1]["text"] for c in bridge.calls if c[0] == "notify:progress"]
+    assert progress[0] == "планирую" and progress[-1] == ""      # the extension shows each step, then clears
 
 
 def test_agent_asks_before_checkout_and_stops_on_no(tmp_path):
@@ -368,7 +374,7 @@ def test_agent_hands_captcha_to_the_user(tmp_path):
 def test_refused_task_never_opens_the_browser(tmp_path):
     agent, app, bridge = make_agent([], tmp_path=tmp_path)
     outcome = asyncio.run(agent.run(Job("переведи 1000 рублей Пете на карту")))
-    assert not outcome.ok and not bridge.calls
+    assert not outcome.ok and not [c for c in bridge.calls if not c[0].startswith("notify:")]
 
 
 def test_snapshot_text_marks_page_as_data():
@@ -376,6 +382,47 @@ def test_snapshot_text_marks_page_as_data():
     assert "[1] ссылка «Наушники Sony WH-1000XM5» → ozon.ru/product/sony-1/" in text
     assert "[2] кнопка «Оформить заказ»" in text
     assert parse_json('```json\n{"a": 1}\n```') == {"a": 1}
+
+
+def test_read_says_reading_at_once_then_the_summary(jarvis):
+    from assistant.web.agent import Outcome
+
+    skill = next(s for s in jarvis.skills if s.name == "web")
+
+    class Agent:
+        async def read_current(self, question):
+            return Outcome(True, "Статья о том, как выбрать наушники.", "Наушники", "- Главное: звук", "https://a.ru/x")
+
+    skill.agent = Agent()
+    shown = []
+    jarvis.ui.show_deck = shown.append
+
+    async def run():
+        reply = await skill._read("перескажи эту статью")
+        return [part async for part in reply.stream]
+
+    parts = asyncio.run(run())
+    assert parts[0] == "Читаю. " and "наушники" in parts[1]
+    assert shown and shown[0].pinned and "Главное" in shown[0].cards[0].screen
+    skill.agent = None
+
+
+def test_voice_mute_stays_muted_after_the_answer():
+    """"выключи микрофон" is answered aloud; the end of the answer must not flip the tray back to "Жду"."""
+    from assistant.assistant import Assistant
+    from assistant.core import ConsoleUi, State
+
+    app = Assistant.__new__(Assistant)
+    app.ui = ConsoleUi()
+    app.state_listeners = []
+    app.music = type("M", (), {"duck": lambda self, on: None})()
+    app.mic = type("Mic", (), {"paused": True})()
+    app._dictating = False
+    app._set_state(State.IDLE)
+    assert app.state is State.MUTED
+    app.mic.paused = False
+    app._set_state(State.IDLE)
+    assert app.state is State.IDLE
 
 
 # ------------------------------------------------------------------ "да" / "нет" for background questions

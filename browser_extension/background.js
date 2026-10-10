@@ -25,7 +25,7 @@ let ws = null;
 let pingTimer = null;
 let trusted = false;      // Jarvis proved it knows the pairing key
 let myNonce = "";
-const S = { windowId: null, tabId: null, mode: "minimized" };
+const S = { windowId: null, tabId: null, mode: "tab", ownWindow: false, userTabId: null };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -139,6 +139,11 @@ async function connect() {
       setIcon(msg.state);
       return;
     }
+    if (msg.event === "progress" && trusted) {
+      await loadState();
+      await progress(msg);
+      return;
+    }
     if (msg.id == null || !trusted) return;
     const handler = HANDLERS[msg.method];
     try {
@@ -151,23 +156,33 @@ async function connect() {
   };
 }
 
-// ------------------------------------------------------------------ agent window
+// ------------------------------------------------------------------ the agent's tab
+// mode "tab" (default): a new background tab in the user's own window, in a «Джарвис» group — the user keeps their
+// tab and can watch the agent by clicking its tab. "minimized" / "background": a window of its own.
 async function windowAlive() {
-  if (S.windowId == null) return false;
-  try { await chrome.windows.get(S.windowId); return true; } catch (e) { return false; }
+  if (S.tabId == null) return false;
+  try { await chrome.tabs.get(S.tabId); return true; } catch (e) { return false; }
 }
 
 async function agentTab() {
-  if (!(await windowAlive())) throw new Error("окно агента закрыто");
+  if (!(await windowAlive())) throw new Error("вкладка агента закрыта");
+  return S.tabId;
+}
+
+async function userWindow() {
   try {
-    const t = await chrome.tabs.get(S.tabId);
-    if (t.windowId === S.windowId) return t.id;
-  } catch (e) { /* closed: take the active one */ }
-  const [t] = await chrome.tabs.query({ windowId: S.windowId, active: true });
-  if (!t) throw new Error("в окне агента нет вкладок");
-  S.tabId = t.id;
-  await saveState();
-  return t.id;
+    const w = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
+    if (w && w.id != null) return w;
+  } catch (e) { /* no window */ }
+  const all = await chrome.windows.getAll({ windowTypes: ["normal"] });
+  return all.find((w) => w.state !== "minimized") || all[0] || null;
+}
+
+async function groupTab(tabId, windowId) {
+  try {
+    const groupId = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId } });
+    if (chrome.tabGroups) await chrome.tabGroups.update(groupId, { title: "Джарвис", color: "cyan" });
+  } catch (e) { /* no tab groups in this browser: a plain tab */ }
 }
 
 async function waitLoad(tabId, timeout = 15000) {
@@ -193,15 +208,29 @@ async function open({ url, show = false, mode = "" }) {
   let tabId;
   if (await windowAlive()) {
     tabId = await agentTab();
-    await chrome.tabs.update(tabId, { url, active: true });
+    await chrome.tabs.update(tabId, show ? { url, active: true } : { url });
   } else {
-    const opts = { url };
-    if (show) Object.assign(opts, { focused: true, state: "maximized" });
-    else if (S.mode === "background") Object.assign(opts, { focused: false, state: "normal" });
-    else opts.state = "minimized";
-    const w = await chrome.windows.create(opts);
-    S.windowId = w.id;
-    tabId = w.tabs[0].id;
+    const win = S.mode === "tab" || !S.mode ? await userWindow() : null;
+    if (win) {
+      // Next to the user's tab, not activated: their page stays in front.
+      const [current] = await chrome.tabs.query({ windowId: win.id, active: true });
+      const tab = await chrome.tabs.create({ windowId: win.id, url, active: !!show,
+                                             index: current ? current.index + 1 : undefined });
+      S.windowId = win.id;
+      S.ownWindow = false;
+      S.userTabId = current ? current.id : null;
+      tabId = tab.id;
+      await groupTab(tabId, win.id);
+    } else {
+      const opts = { url };
+      if (show) Object.assign(opts, { focused: true, state: "maximized" });
+      else if (S.mode === "background") Object.assign(opts, { focused: false, state: "normal" });
+      else opts.state = "minimized";
+      const w = await chrome.windows.create(opts);
+      S.windowId = w.id;
+      S.ownWindow = true;
+      tabId = w.tabs[0].id;
+    }
   }
   S.tabId = tabId;
   await saveState();
@@ -212,19 +241,31 @@ async function open({ url, show = false, mode = "" }) {
 }
 
 async function showWindow() {
-  if (!(await windowAlive())) return { ok: false, error: "окна агента нет" };
-  await chrome.windows.update(S.windowId, { state: "maximized", focused: true, drawAttention: true });
+  if (!(await windowAlive())) return { ok: false, error: "вкладки агента нет" };
+  const tab = await chrome.tabs.get(S.tabId);
+  await chrome.tabs.update(tab.id, { active: true });
+  const win = await chrome.windows.get(tab.windowId);
+  const opts = { focused: true, drawAttention: true };
+  if (win.state === "minimized") opts.state = S.ownWindow ? "maximized" : "normal";
+  await chrome.windows.update(tab.windowId, opts);
   return { ok: true };
 }
 
 async function hideWindow() {
   if (!(await windowAlive())) return { ok: false };
-  await chrome.windows.update(S.windowId, { state: "minimized" });
+  if (S.ownWindow) {
+    await chrome.windows.update(S.windowId, { state: "minimized" });
+  } else if (S.userTabId != null) {
+    await chrome.tabs.update(S.userTabId, { active: true }).catch(() => {});   // back to the user's own tab
+  }
   return { ok: true };
 }
 
 async function closeWindow() {
-  if (await windowAlive()) await chrome.windows.remove(S.windowId);
+  if (await windowAlive()) {
+    if (S.ownWindow) await chrome.windows.remove(S.windowId).catch(() => {});
+    else await chrome.tabs.remove(S.tabId).catch(() => {});
+  }
   S.windowId = null;
   S.tabId = null;
   await saveState();
@@ -235,14 +276,15 @@ async function closeWindow() {
 async function activeTab() {
   let win = null;
   try { win = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }); } catch (e) { /* none */ }
-  if (win && win.id === S.windowId && win.state === "minimized") win = null;
+  const ownHidden = (w) => S.ownWindow && w.id === S.windowId && w.state === "minimized";
+  if (win && ownHidden(win)) win = null;
   if (!win) {
     const all = await chrome.windows.getAll({ windowTypes: ["normal"] });
-    win = all.find((w) => w.id !== S.windowId && w.state !== "minimized") || all.find((w) => w.id !== S.windowId);
+    win = all.find((w) => !ownHidden(w) && w.state !== "minimized") || all.find((w) => !ownHidden(w));
   }
   if (!win) return null;
   const [t] = await chrome.tabs.query({ windowId: win.id, active: true });
-  return t ? { tabId: t.id, windowId: t.windowId, url: t.url || "", title: t.title || "", agent: win.id === S.windowId } : null;
+  return t ? { tabId: t.id, windowId: t.windowId, url: t.url || "", title: t.title || "", agent: t.id === S.tabId } : null;
 }
 
 // ------------------------------------------------------------------ page calls
@@ -291,8 +333,9 @@ async function act(method, p) {
   return { ...(res || { ok: true }), url: info.url, changed: info.url !== before || now !== tabId };
 }
 
-// The capture API sees only a window that is on screen: a minimized agent window is restored without focus for a
-// moment; if it is still hidden behind other windows, it is brought forward only when Jarvis allows (p.focus).
+// The capture API sees only what is on screen: the agent's background tab is brought to the front for a moment
+// (then the user's tab comes back); a minimized agent window is restored without focus for a moment; if it is still
+// hidden behind other windows, it is brought forward only when Jarvis allows (p.focus).
 async function screenshot(p) {
   const tabId = p.tabId ?? (await agentTab());
   const tab = await chrome.tabs.get(tabId);
@@ -300,6 +343,13 @@ async function screenshot(p) {
   const restore = win.state === "minimized";
   const capture = async () =>
     (await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 85 })).split(",")[1];
+  let giveBack = null;
+  if (!tab.active) {
+    const [current] = await chrome.tabs.query({ windowId: tab.windowId, active: true });
+    giveBack = current ? current.id : null;
+    await chrome.tabs.update(tabId, { active: true });
+    await sleep(600);
+  }
   try {
     if (restore) {
       await chrome.windows.update(win.id, { state: "normal", focused: false });
@@ -315,7 +365,20 @@ async function screenshot(p) {
     }
   } finally {
     if (restore) await chrome.windows.update(win.id, { state: "minimized" }).catch(() => {});
+    if (giveBack != null) await chrome.tabs.update(giveBack, { active: true }).catch(() => {});
   }
+}
+
+// What the agent is doing, on its icon (a step counter) and on its tab (a small banner).
+async function progress(p) {
+  const text = String(p.text || "");
+  chrome.action.setBadgeBackgroundColor({ color: "#1FD1A5" });
+  chrome.action.setBadgeText({ text: text ? String(p.step ?? "…") : "" });
+  chrome.action.setTitle({ title: text ? `Джарвис в браузере: ${text}` : "Джарвис: нажмите, чтобы позвать (как «Джарвис» голосом)" });
+  if (await windowAlive()) {
+    try { await inPage(S.tabId, "banner", { text }); } catch (e) { /* a page we cannot touch */ }
+  }
+  return { ok: true };
 }
 
 async function back() {
@@ -349,25 +412,36 @@ const HANDLERS = {
   key: (p) => act("key", p),
   video,
   screenshot,
+  progress,
 };
 
 // ------------------------------------------------------------------ lifecycle
 chrome.tabs.onCreated.addListener(async (tab) => {
   await loadState();
-  if (S.windowId != null && tab.windowId === S.windowId) {
-    S.tabId = tab.id;  // the site opened a new tab: follow it
+  if (S.tabId != null && tab.openerTabId === S.tabId) {
+    S.tabId = tab.id;  // the agent's page opened a new tab: follow it (the user's own new tabs are not touched)
     await saveState();
+    if (!S.ownWindow && S.userTabId != null && tab.active) {
+      await chrome.tabs.update(S.userTabId, { active: true }).catch(() => {});   // keep the user's tab in front
+    }
   }
+});
+
+async function agentGone() {
+  S.windowId = null;
+  S.tabId = null;
+  await saveState();
+  if (trusted) send({ event: "window_closed" });
+}
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  await loadState();
+  if (tabId === S.tabId) await agentGone();
 });
 
 chrome.windows.onRemoved.addListener(async (windowId) => {
   await loadState();
-  if (windowId === S.windowId) {
-    S.windowId = null;
-    S.tabId = null;
-    await saveState();
-    if (trusted) send({ event: "window_closed" });
-  }
+  if (S.ownWindow && windowId === S.windowId && S.tabId != null) await agentGone();
 });
 
 // The button in the toolbar: the same as saying "Джарвис" — he answers and listens for the command.

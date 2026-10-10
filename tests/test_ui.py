@@ -78,6 +78,27 @@ def test_state_icons(qapp):
         assert not state_icon(state).isNull()
 
 
+def test_icon_takes_the_state_colors(qapp):
+    from assistant.ui.icons import PALETTES, render, svg_for
+
+    assert "#1FD1A5" in svg_for("listening") and "#2AA8E0" not in svg_for("listening")
+    assert "#E0503C" in svg_for("muted")          # the red slash
+    for small in (16, 128):
+        img = render("thinking", small)
+        center = img.pixelColor(small // 2, small // 4)
+        assert center.alpha() > 0
+    assert set(PALETTES) >= {"idle", "listening", "thinking", "speaking", "muted", "error", "off"}
+
+
+def test_extension_icons_exist():
+    from pathlib import Path
+
+    icons = Path(__file__).resolve().parents[1] / "browser_extension" / "icons"
+    for state in ("idle", "listening", "thinking", "speaking", "muted", "error", "off"):
+        for size in (16, 32, 48, 128):
+            assert (icons / f"{state}-{size}.png").exists(), (state, size)
+
+
 @pytest.mark.parametrize("combo,mods,vk", [
     ("<ctrl>+<alt>+j", 0x0003, ord("J")), ("<ctrl>+<alt>+k", 0x0003, ord("K")), ("<ctrl>+<shift>+<f5>", 0x0006, 0x74),
 ])

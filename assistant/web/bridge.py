@@ -149,6 +149,20 @@ class Bridge:
                 log.info("Браузер отключился")
                 self.on_event("disconnected", {})
 
+    def notify(self, event: str, **data: Any) -> None:
+        """A one-way message to the extension (Jarvis's state for its icon); dropped when it is not connected."""
+        conn = self._conn
+        if conn is None:
+            return
+
+        async def send() -> None:
+            try:
+                await conn.send(json.dumps({"event": event, **data}, ensure_ascii=False))
+            except Exception as exc:  # noqa: BLE001 - the icon is not worth an error
+                log.debug("Браузеру не отправлено %s: %s", event, exc)
+
+        asyncio.get_running_loop().create_task(send())
+
     async def call(self, method: str, timeout: float = 40, **params: Any) -> Any:
         conn = self._conn
         if conn is None:

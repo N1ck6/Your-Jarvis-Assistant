@@ -35,28 +35,16 @@ STATE_COLORS = {
 }
 
 
-def state_icon(state: State | None, size: int = 64) -> QIcon:
-    color = QColor(STATE_COLORS.get(state, "#5B6B7F") if state else "#888888")
-    pm = QPixmap(size, size)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setBrush(color)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawEllipse(2, 2, size - 4, size - 4)
-    p.setPen(QColor("white"))
-    f = QFont("Segoe UI", int(size * 0.45))
-    f.setBold(True)
-    p.setFont(f)
-    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "J")
-    if state is State.MUTED:
-        p.setPen(QColor("white"))
-        pen = p.pen()
-        pen.setWidth(max(3, size // 12))
-        p.setPen(pen)
-        p.drawLine(int(size * 0.2), int(size * 0.8), int(size * 0.8), int(size * 0.2))
-    p.end()
-    return QIcon(pm)
+_ICONS: dict[State | None, QIcon] = {}
+
+
+def state_icon(state: State | None) -> QIcon:
+    """The arc-reactor icon (assistant/ui/icon.svg) in the colors of the state."""
+    if state not in _ICONS:
+        from assistant.ui import icons
+
+        _ICONS[state] = icons.state_icon(state)
+    return _ICONS[state]
 
 
 class Panels:

@@ -44,6 +44,7 @@ def make_app(texts=()):
     app.cfg = load_settings()
     app.ui = ConsoleUi()
     app.state = None
+    app.state_listeners = []
     app.loop = None
     app._task = None
     app.interruptions = 0

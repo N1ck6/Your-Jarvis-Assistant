@@ -139,6 +139,8 @@ class WebSkill(Skill):
             log.warning("Связь с браузером не запущена (порт %d занят?): %s", cfg.port, exc)
         self.scheduler = Scheduler(self._scheduled)
         self.scheduler.start()
+        # The extension's icon takes Jarvis's colors: listening, thinking, speaking, microphone off.
+        self.app.state_listeners.append(lambda state: self.bridge.notify("state", state=state.value))
 
     async def stop(self) -> None:
         if self.scheduler is not None:
@@ -147,7 +149,9 @@ class WebSkill(Skill):
             await self.bridge.stop()
 
     def _on_event(self, event: str, data: dict) -> None:
-        if event == "wake":   # the extension's button in the browser toolbar: the same as saying "Джарвис"
+        if event == "connected":
+            self.bridge.notify("state", state=self.app.state.value)
+        elif event == "wake":   # the extension's button in the browser toolbar: the same as saying "Джарвис"
             log.info("Кнопка Джарвиса в браузере")
             self.app.wake_up()
         elif event == "window_closed" and self.agent is not None and self.agent.cancel():

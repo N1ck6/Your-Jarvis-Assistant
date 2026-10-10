@@ -119,6 +119,8 @@ class Assistant:
         self.use_mic = use_mic
         self.loop: asyncio.AbstractEventLoop | None = None
         self.state = State.IDLE
+        # Called on every state change in the loop thread (the browser extension's icon follows it).
+        self.state_listeners: list[Callable[[State], None]] = []
         self.voicelab_url = f"http://{cfg.voicelab.host}:{cfg.voicelab.port}/"
         self.on_exit: Callable[[], None] = lambda: None
 
@@ -343,6 +345,8 @@ class Assistant:
         # Music steps aside while Jarvis listens, thinks or talks.
         self.music.duck(state in (State.LISTENING, State.THINKING, State.SPEAKING))
         self.ui.set_state(state, detail)
+        for listener in self.state_listeners:
+            listener(state)
 
     def _earcon(self, clip: AudioClip) -> None:
         if self.cfg.audio.earcons:

@@ -64,8 +64,20 @@ async function saveState() {
   await chrome.storage.session.set({ agent: { ...S } });
 }
 
+// The icon (made from assistant/ui/icon.svg by scripts/make_icons.py) shows Jarvis's state like his tray icon:
+// idle blue, listening cyan, thinking amber, speaking bright blue, microphone off grey with a slash, no link grey.
+const ICON_STATES = ["idle", "listening", "thinking", "speaking", "muted", "error", "off"];
+
+function setIcon(state) {
+  const name = ICON_STATES.includes(state) ? state : "idle";
+  const path = {};
+  for (const size of [16, 32, 48, 128]) path[size] = `icons/${name}-${size}.png`;
+  chrome.action.setIcon({ path }).catch(() => {});
+}
+
 function setBadge(state) {
-  const text = { on: "", off: "off", pair: "key" }[state];
+  setIcon(state === "on" ? "idle" : "off");
+  const text = { on: "", off: "", pair: "key" }[state];
   const title = {
     on: "Джарвис: нажмите, чтобы позвать (как «Джарвис» голосом)",
     off: "Джарвис: нет связи (запущен ли Джарвис?)",
@@ -121,6 +133,10 @@ async function connect() {
       trusted = true;
       setBadge("on");
       send({ event: "auth", proof: await hmac(key, "ext:" + msg.nonce) });
+      return;
+    }
+    if (msg.event === "state" && trusted) {
+      setIcon(msg.state);
       return;
     }
     if (msg.id == null || !trusted) return;

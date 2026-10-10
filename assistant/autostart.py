@@ -48,5 +48,8 @@ def set_enabled(enabled: bool, folder: Path | None = None) -> None:
     link.Arguments = args
     link.WorkingDirectory = str(ROOT if not getattr(sys, "frozen", False) else Path(sys.executable).parent)
     link.Description = "Джарвис — голосовой ассистент"
+    icon = Path(__file__).with_name("ui") / "jarvis.ico"
+    if icon.exists():
+        link.IconLocation = str(icon)
     link.Save()
     log.info("Автозапуск включён: %s", path)

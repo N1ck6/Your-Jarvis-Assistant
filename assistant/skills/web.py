@@ -123,6 +123,7 @@ class WebSkill(Skill):
         self.bridge: Bridge | None = None
         self.agent: WebAgent | None = None
         self.scheduler: Scheduler | None = None
+        self._sent_state = ""     # the last state the extension's icon was told
 
     # ---------------------------------------------------------------- lifecycle
     async def start(self) -> None:
@@ -140,7 +141,12 @@ class WebSkill(Skill):
         self.scheduler = Scheduler(self._scheduled)
         self.scheduler.start()
         # The extension's icon takes Jarvis's colors: listening, thinking, speaking, microphone off.
-        self.app.state_listeners.append(lambda state: self.bridge.notify("state", state=state.value))
+        self.app.state_listeners.append(self._send_state)
+
+    def _send_state(self, state) -> None:
+        if state.value != self._sent_state and self.bridge is not None and self.bridge.connected:
+            self._sent_state = state.value
+            self.bridge.notify("state", state=state.value)
 
     async def stop(self) -> None:
         if self.scheduler is not None:
@@ -150,7 +156,8 @@ class WebSkill(Skill):
 
     def _on_event(self, event: str, data: dict) -> None:
         if event == "connected":
-            self.bridge.notify("state", state=self.app.state.value)
+            self._sent_state = ""
+            self._send_state(self.app.state)
         elif event == "wake":   # the extension's button in the browser toolbar: the same as saying "Джарвис"
             log.info("Кнопка Джарвиса в браузере")
             self.app.wake_up()

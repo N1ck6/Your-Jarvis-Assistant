@@ -68,15 +68,37 @@ async function saveState() {
 // idle blue, listening cyan, thinking amber, speaking bright blue, microphone off grey with a slash, no link grey.
 const ICON_STATES = ["idle", "listening", "thinking", "speaking", "muted", "error", "off"];
 
-function setIcon(state) {
-  const name = ICON_STATES.includes(state) ? state : "idle";
+// Jarvis passes through short states in a blink (listening → thinking → speaking); redrawing on each of them made the
+// icon flicker. The same icon is never set twice, and a new one waits until the state holds for a moment.
+let shownIcon = "";
+let wantedIcon = "";
+let iconTimer = null;
+
+function applyIcon() {
+  iconTimer = null;
+  if (wantedIcon === shownIcon) return;
+  shownIcon = wantedIcon;
   const path = {};
-  for (const size of [16, 32, 48, 128]) path[size] = `icons/${name}-${size}.png`;
-  chrome.action.setIcon({ path }).catch(() => {});
+  for (const size of [16, 32, 48, 128]) path[size] = `icons/${shownIcon}-${size}.png`;
+  chrome.action.setIcon({ path }).catch(() => { shownIcon = ""; });
 }
+
+function setIcon(state, now = false) {
+  wantedIcon = ICON_STATES.includes(state) ? state : "idle";
+  if (now) {
+    clearTimeout(iconTimer);
+    applyIcon();
+  } else if (!iconTimer) {
+    iconTimer = setTimeout(applyIcon, 250);
+  }
+}
+
+let shownBadge = "";
 
 function setBadge(state) {
   setIcon(state === "on" ? "idle" : "off");
+  if (state === shownBadge) return;
+  shownBadge = state;
   const text = { on: "", off: "", pair: "key" }[state];
   const title = {
     on: "Джарвис: нажмите, чтобы позвать (как «Джарвис» голосом)",
@@ -92,44 +114,71 @@ function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
 
+// One connection at a time. Several callers (the keep-alive alarm, the button, browser start) may ask at once:
+// before, each of them opened a socket during the key lookup, Jarvis kept the newest, the closed one wiped out the
+// newer one and reconnected — a storm of reconnects several times a second that kept flipping the icon.
+let connecting = false;
+let retryTimer = null;
+let retryDelay = 3000;
+
+function scheduleRetry(delay) {
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
+}
+
 async function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  const key = await pairingKey();
-  if (!key) {
-    setBadge("pair");
-    return;
-  }
+  if (connecting || (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING))) return;
+  connecting = true;
+  let sock;
+  let key = "";
   try {
-    ws = new WebSocket(`ws://127.0.0.1:${PORT}/`);
+    key = await pairingKey();
+    if (!key) {
+      setBadge("pair");
+      return;
+    }
+    sock = new WebSocket(`ws://127.0.0.1:${PORT}/`);
   } catch (e) {
-    ws = null;
     return;
+  } finally {
+    connecting = false;
   }
+  ws = sock;
   trusted = false;
-  ws.onopen = () => {
+  let replaced = false;
+  sock.onopen = () => {
     myNonce = nonce();
     send({ event: "hello", version: VERSION, nonce: myNonce });
     clearInterval(pingTimer);
     pingTimer = setInterval(() => send({ event: "ping" }), 20000);  // keeps the service worker alive
   };
-  ws.onclose = () => {
-    setBadge("off");
-    clearInterval(pingTimer);
+  sock.onclose = () => {
+    if (ws !== sock) return;          // an old socket closing must not touch the current one
     ws = null;
     trusted = false;
-    setTimeout(connect, 5000);
+    clearInterval(pingTimer);
+    setBadge("off");
+    // Another copy of the extension (a second browser) took the link: do not fight it every few seconds.
+    scheduleRetry(replaced ? 60000 : retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 30000);
   };
-  ws.onerror = () => {};
-  ws.onmessage = async (e) => {
+  sock.onerror = () => {};
+  sock.onmessage = async (e) => {
+    if (ws !== sock) return;
     let msg;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
     if (!msg) return;
+    if (msg.event === "replaced") {
+      replaced = true;
+      return;
+    }
     if (msg.event === "welcome") {
       // Jarvis answers our nonce with the key; we answer its nonce. Only then commands are obeyed.
       if (msg.proof !== (await hmac(key, "jarvis:" + myNonce))) {
-        ws.close();
+        sock.close();
         return;
       }
+      retryDelay = 3000;
       trusted = true;
       setBadge("on");
       send({ event: "auth", proof: await hmac(key, "ext:" + msg.nonce) });

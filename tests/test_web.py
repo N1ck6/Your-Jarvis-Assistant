@@ -166,6 +166,24 @@ def test_bridge_rejects_wrong_key_and_origin(unused_port):
     asyncio.run(run())
 
 
+def test_second_extension_takes_over_and_the_first_is_told(unused_port):
+    """Two copies (two browsers): the newest keeps the link, the old one hears "replaced" and does not fight back."""
+    async def run():
+        bridge = Bridge(unused_port, "k" * 64)
+        await bridge.start()
+        first = await fake_extension(unused_port, "k" * 64)
+        assert await bridge.wait_connected(2)
+        second = await fake_extension(unused_port, "k" * 64)
+        told = json.loads(await asyncio.wait_for(first.recv(), 2))
+        assert told == {"event": "replaced"}
+        await asyncio.sleep(0.1)
+        assert bridge.connected
+        await second.close()
+        await bridge.stop()
+
+    asyncio.run(run())
+
+
 def test_pairing_key_written_for_the_extension(tmp_path):
     ext = tmp_path / "ext"
     ext.mkdir()

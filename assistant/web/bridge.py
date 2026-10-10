@@ -74,6 +74,7 @@ class Bridge:
     async def start(self) -> None:
         from websockets.asyncio.server import serve
 
+        logging.getLogger("websockets").setLevel(logging.WARNING)   # "connection open" on every reconnect is noise
         self._server = await serve(self._handle, "127.0.0.1", self.port, origins=[self.origin],
                                    max_size=16 * 1024 * 1024, ping_interval=None)
         log.info("Связь с браузером: ws://127.0.0.1:%d (ждёт расширение)", self.port)
@@ -115,7 +116,15 @@ class Bridge:
             log.warning("Расширение браузера: неверный ключ связи (перезагрузите расширение)")
             return
         if self._conn is not None:
-            await self._conn.close()
+            # A second copy of the extension (another browser or profile) takes over; the old one is told so and
+            # waits a minute instead of reconnecting at once and pushing this one out in turn.
+            old = self._conn
+            try:
+                await old.send(json.dumps({"event": "replaced"}))
+            except Exception:  # noqa: BLE001 - it may be gone already
+                pass
+            await old.close()
+            log.info("Другая копия расширения заняла связь — старая отключена")
         self._conn = conn
         self.version = str(hello.get("version") or "")
         self._connected.set()

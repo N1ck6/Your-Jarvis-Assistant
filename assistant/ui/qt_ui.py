@@ -1191,7 +1191,7 @@ class QtUi(QObject):
         a = assistant
         if a.cfg.ui.hud:
             self.hud = HudWindow()
-            self.hud.on_click = lambda: a._threadsafe(a.listen_now)
+            self.hud.on_click = lambda: a._threadsafe(a.wake_up)
             self.hud.show()
         self.window.on_user_nav = lambda i: a._threadsafe(a.deck_paged, i)
         self.window.on_user_close = lambda: (self.visual.fade_out(), a._threadsafe(a.deck_closed))
@@ -1199,7 +1199,7 @@ class QtUi(QObject):
         menu.addAction(self._status_action)
         menu.addSeparator()
         listen = menu.addAction("Слушать сейчас  (Ctrl+Alt+J)")
-        listen.triggered.connect(lambda: a._threadsafe(a.listen_now))
+        listen.triggered.connect(lambda: a._threadsafe(a.wake_up))
         self._mute_action.triggered.connect(lambda: a._threadsafe(a.toggle_mute))
         menu.addAction(self._mute_action)
         self.chat.on_send = lambda text: a.submit(a.handle_text(text))
@@ -1228,7 +1228,8 @@ class QtUi(QObject):
 
     def _on_click(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger and self.assistant:
-            self.assistant._threadsafe(self.assistant.listen_now)
+            # The same as saying "Джарвис" (and as the browser extension's button): a short reply, then listening.
+            self.assistant._threadsafe(self.assistant.wake_up)
 
     def _on_state(self, state: State, detail: str) -> None:
         if self.hud is not None:

@@ -432,6 +432,10 @@ class Microphone:
         self.last_frame = time.monotonic()
         name = sd.query_devices(self._stream.device)["name"]
         log.info("Микрофон: %s", name)
+        from assistant.audio import player
+
+        if not player.is_hands_free(name):
+            player.last_good_input = name   # kept when Bluetooth headphones connect and become the default
 
     @property
     def silent_for(self) -> float:

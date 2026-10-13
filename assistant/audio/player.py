@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from typing import Callable
@@ -59,11 +60,53 @@ class AudioClip:
         return len(self.samples) / self.sr
 
 
+# A Bluetooth headset's own microphone: opening it switches the headphones into the hands-free ("call") profile —
+# mono sound, a volume slider stuck at 0, the buttons on the headphones no longer change the volume, and other
+# programs' music cuts out when the microphone is closed again. Windows names these endpoints
+# "Головной телефон (Galaxy Buds2 Hands-Free AG Audio)" / "Headset (... Hands-Free AG Audio)".
+_HANDS_FREE = re.compile(r"hands-?free|\bag audio\b|^головной телефон\b|^headset\s*\(", re.I)
+_MAPPER = re.compile(r"переназначение|mapper|первичный драйвер|primary sound", re.I)
+last_good_input = ""   # the microphone that was in use before the headset came: kept when it connects
+
+
+def is_hands_free(name: str, all_names: list[str] | None = None) -> bool:
+    """MME cuts names at 31 characters ("Головной телефон (Galaxy Buds2 "): the full name decides."""
+    if _HANDS_FREE.search(name):
+        return True
+    full = [n for n in (all_names or []) if n.startswith(name.rstrip()) and n != name]
+    return any(_HANDS_FREE.search(n) for n in full)
+
+
+def default_input() -> int | None:
+    """The system default microphone, unless it is a Bluetooth headset's hands-free one and another microphone exists:
+    then the one used before (or the first other one). None = the system default as is."""
+    try:
+        default = sd.query_devices(kind="input")
+        devices = list(sd.query_devices())
+    except Exception:
+        return None
+    names = [d["name"] for d in devices]
+    if not is_hands_free(default["name"], names):
+        return None
+    others = [i for i, d in enumerate(devices)
+              if d["max_input_channels"] > 0 and d["hostapi"] == default["hostapi"]
+              and not is_hands_free(d["name"], names) and not _MAPPER.search(d["name"])]
+    if not others:
+        log.warning("Единственный микрофон — гарнитура Bluetooth «%s»: наушники перейдут в режим звонка",
+                    default["name"])
+        return None
+    pick = next((i for i in others if devices[i]["name"] == last_good_input), others[0])
+    log.info("Микрофон по умолчанию — гарнитура Bluetooth «%s»; беру «%s», чтобы наушники не ушли в режим звонка",
+             default["name"], devices[pick]["name"])
+    return pick
+
+
 def resolve_device(spec: str, kind: str) -> int | None:
-    """"" -> default; digits -> index; otherwise substring of the device name."""
+    """"" -> default (for a microphone: not a Bluetooth headset's, see default_input); digits -> index;
+    otherwise substring of the device name."""
     spec = (spec or "").strip()
     if not spec:
-        return None
+        return default_input() if kind == "input" else None
     if spec.isdigit():
         return int(spec)
     key = "max_input_channels" if kind == "input" else "max_output_channels"

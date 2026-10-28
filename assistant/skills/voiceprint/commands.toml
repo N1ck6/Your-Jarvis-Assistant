@@ -1,0 +1,6 @@
+# Phrases are recognized in main.py. Examples: the commands the router turns free phrases into.
+examples = [
+    "запомни мой голос",
+    "забудь мой голос",
+    "ты узнаешь мой голос",
+]

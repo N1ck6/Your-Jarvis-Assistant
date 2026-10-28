@@ -1,0 +1,6 @@
+phrase = [
+    { text = "смени голос", action = "lab" },
+    { text = "открой настройки голоса", action = "lab" },
+    { text = "говори быстрее", action = "rate" },
+    { text = "ты говоришь слишком быстро", action = "rate" },
+]

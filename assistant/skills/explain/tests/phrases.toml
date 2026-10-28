@@ -1,0 +1,8 @@
+phrase = [
+    { text = "объясни подробно что такое DNS", action = "explain" },
+    { text = "расскажи наглядно про чёрные дыры", action = "explain" },
+    { text = "объясни что такое блокчейн по полочкам", action = "explain" },
+    { text = "сделай презентацию про квантовые компьютеры", action = "explain" },
+    { text = "подробнее", action = "explain" },
+    { text = "разбери тему инфляция", action = "explain" },
+]

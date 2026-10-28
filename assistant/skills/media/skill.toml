@@ -1,0 +1,9 @@
+[skill]
+id = "media"
+name = "Громкость и воспроизведение"
+version = "1.0.0"
+author = "Jarvis"
+description = "Громкость и воспроизведение: громче, тише, без звука, пауза, следующий трек."
+api = 1
+entry = "main:create"
+permissions = ["keyboard"]

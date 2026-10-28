@@ -1,0 +1,5 @@
+phrase = [
+    { text = "запомни мой голос", action = "enroll" },
+    { text = "забудь мой голос", action = "forget" },
+    { text = "ты узнаешь мой голос", action = "check" },
+]

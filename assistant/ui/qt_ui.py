@@ -1210,7 +1210,7 @@ class QtUi(QObject):
         screen = menu.addAction("Помочь с экраном  (Ctrl+Alt+S)")
         screen.triggered.connect(lambda: a.submit(a.handle_text("что на экране")))
         menu.addSeparator()
-        from assistant.skills.scenarios import scenarios_file
+        from assistant.skills.scenarios.main import scenarios_file
 
         scen = menu.addAction("Мои сценарии…")
         scen.triggered.connect(lambda: subprocess.Popen(["notepad.exe", str(scenarios_file())]))

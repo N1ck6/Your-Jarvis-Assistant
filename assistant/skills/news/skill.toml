@@ -1,0 +1,26 @@
+[skill]
+id = "news"
+name = "Новости"
+version = "1.0.0"
+author = "Jarvis"
+description = "Новости: главное, города или по теме из Google News (без ключа и токенов)."
+api = 1
+entry = "main:create"
+permissions = ["network"]
+
+[config]
+# Google News RSS by default (main news, a city, a topic). Own feeds: city or "главное" -> RSS url,
+# e.g. { "москва" = "https://www.m24.ru/rss.xml" }.
+feeds = {}
+cache_min = 10
+# Headlines spoken aloud (brief, like Jarvis); up to 8 are shown on the card.
+spoken = 2
+
+[[settings]]
+key = "spoken"
+label = "Сколько заголовков читать вслух"
+type = "number"
+hint = "остальные — на карточке"
+min = 1
+max = 8
+step = 1

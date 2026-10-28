@@ -1,0 +1,8 @@
+phrase = [
+    { text = "найди в яндексе рецепт борща", action = "search" },
+    { text = "найди в браузере курс python", action = "search" },
+    { text = "поищи в интернете новости спорта", action = "search" },
+    { text = "найди на ютубе обзор 4060", action = "search" },
+    { text = "загугли как почистить кэш", action = "search" },
+    { text = "найди рецепт борща в яндексе", action = "search" },
+]

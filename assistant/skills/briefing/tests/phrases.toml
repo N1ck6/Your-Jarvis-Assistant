@@ -1,0 +1,7 @@
+phrase = [
+    { text = "доброе утро", action = "brief" },
+    { text = "Доброе утро, Джарвис!", action = "brief" },
+    { text = "сводка", action = "brief" },
+    { text = "что на сегодня", action = "brief" },
+    { text = "какой план на день", action = "brief" },
+]

@@ -151,29 +151,6 @@ volume = 0.6
 # Music volume share while Jarvis listens or speaks.
 duck_volume = 0.2
 
-[calendar]
-# Secret iCal links: Google Calendar -> Settings -> "Secret address in iCal format".
-ics_urls = []
-cache_min = 10
-
-[briefing]
-# "08:30" = say the morning briefing automatically every day; "" = only on request.
-auto_time = ""
-# Two fresh headlines of the default city in the briefing.
-news = true
-
-[news]
-# Google News RSS by default (main news, a city, a topic). Own feeds: city or "главное" -> RSS url,
-# e.g. { "москва" = "https://www.m24.ru/rss.xml" }.
-feeds = {}
-cache_min = 10
-# Headlines spoken aloud (brief, like Jarvis); up to 8 are shown on the card.
-spoken = 2
-
-[search]
-default = "yandex"
-engines = { "yandex" = "https://yandex.ru/search/?text={q}", "google" = "https://www.google.com/search?q={q}", "youtube" = "https://www.youtube.com/results?search_query={q}", "wiki" = "https://ru.wikipedia.org/w/index.php?search={q}", "maps" = "https://yandex.ru/maps/?text={q}", "market" = "https://market.yandex.ru/search?text={q}" }
-
 [web]
 # Browser agent: "найди на озоне …", "перескажи эту статью", "каждый день проверяй цену …".
 # Needs the extension from browser_extension/ (README → «Браузер»).

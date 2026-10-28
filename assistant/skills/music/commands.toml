@@ -1,0 +1,9 @@
+# Phrases are recognized in main.py. Examples: the commands the router turns free phrases into.
+examples = [
+    "включи <название трека>",
+    "включи музыку",
+    "включи спокойную музыку (подпапка-плейлист по настроению или имени)",
+    "что играет",
+    "сколько треков в папке музыка",
+    "выключи музыку",
+]

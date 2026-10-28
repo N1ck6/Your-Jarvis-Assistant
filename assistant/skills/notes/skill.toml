@@ -1,0 +1,9 @@
+[skill]
+id = "notes"
+name = "Заметки и списки"
+version = "1.0.0"
+author = "Jarvis"
+description = "Заметки и списки в Markdown (data/notes или папка Obsidian)."
+api = 1
+entry = "main:create"
+permissions = ["files"]

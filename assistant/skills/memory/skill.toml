@@ -1,0 +1,9 @@
+[skill]
+id = "memory"
+name = "Память о пользователе"
+version = "1.0.0"
+author = "Jarvis"
+description = "Долгая память о пользователе: «запомни, что…». Факты попадают в каждый запрос к модели."
+api = 1
+entry = "main:create"
+permissions = []

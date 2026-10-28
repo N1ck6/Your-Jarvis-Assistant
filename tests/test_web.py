@@ -19,7 +19,7 @@ def jarvis():
     from assistant.skills.base import load_skills
 
     a = FakeApp()
-    a.skills = load_skills(a.cfg.skills.enabled)
+    a.skills = load_skills(a.cfg.skills.enabled, a.cfg.skills.disabled)
     for s in a.skills:
         s.setup(a)
     a.brain = Brain(a, a.skills)

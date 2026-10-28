@@ -88,11 +88,6 @@ SECTIONS: list[tuple[str, list[F]]] = [
         F("llm.cloud_history_turns", "Сколько прошлых реплик отправлять в облако", "number", "каждая стоит токенов", 0, 6, 1),
     ]),
     ("Модули", [
-        F("search.default", "Поисковик для «найди в браузере»", "select", options=[["yandex", "Яндекс"], ["google", "Google"]]),
-        F("calendar.ics_urls", "Ссылки на календари (iCal)", "list", "Google Календарь → Настройки → Закрытый адрес в формате iCal"),
-        F("briefing.auto_time", "Утренняя сводка автоматически в", "time", "пусто — только по просьбе", restart=True),
-        F("briefing.news", "Новости города в сводке", "bool"),
-        F("news.spoken", "Сколько заголовков читать вслух", "number", "остальные — на карточке", 1, 8, 1),
         F("explain.provider", "Кто готовит карточки объяснений", "select", "облако быстрее и точнее, но тратит ~2,5 тыс. токенов",
           options=[["local", "Локальная модель"], ["cloud", "Облако (Groq / Gemini), запасная — локальная"]]),
         F("explain.max_cards", "Карточек в объяснении, до", "number", "", 4, 8, 1),

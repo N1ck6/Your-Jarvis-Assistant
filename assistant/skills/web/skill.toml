@@ -1,0 +1,9 @@
+[skill]
+id = "web"
+name = "Браузер: задачи на сайтах"
+version = "1.0.0"
+author = "Jarvis"
+description = "Браузерный агент: задачи на сайтах в вашем браузере, пересказ открытой страницы, проверки по расписанию."
+api = 1
+entry = "main:create"
+permissions = ["browser", "cloud_llm", "network"]

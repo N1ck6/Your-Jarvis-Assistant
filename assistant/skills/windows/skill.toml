@@ -1,0 +1,9 @@
+[skill]
+id = "windows"
+name = "Окна и процессы"
+version = "1.0.0"
+author = "Jarvis"
+description = "Окна и программы: закрыть, свернуть, развернуть, переключиться, список окон."
+api = 1
+entry = "main:create"
+permissions = ["keyboard"]

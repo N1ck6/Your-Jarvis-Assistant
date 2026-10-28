@@ -1,0 +1,9 @@
+[skill]
+id = "power"
+name = "Питание компьютера"
+version = "1.0.0"
+author = "Jarvis"
+description = "Питание: заблокировать сразу; сон, выключение и перезагрузка — только после «да»."
+api = 1
+entry = "main:create"
+permissions = ["power"]

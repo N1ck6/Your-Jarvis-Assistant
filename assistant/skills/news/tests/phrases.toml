@@ -1,0 +1,5 @@
+phrase = [
+    { text = "новости", action = "news" },
+    { text = "что нового в Москве", action = "news" },
+    { text = "новости технологий", action = "news" },
+]

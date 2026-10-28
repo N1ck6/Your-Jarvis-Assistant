@@ -1,0 +1,28 @@
+[skill]
+id = "briefing"
+name = "Утренняя сводка"
+version = "1.0.0"
+author = "Jarvis"
+description = "Утренняя сводка: приветствие, дата, погода, календарь, таймеры, дела."
+api = 1
+entry = "main:create"
+permissions = ["network"]
+requires = ["weather", "agenda", "timers", "notes", "news"]
+
+[config]
+# "08:30" = say the morning briefing automatically every day; "" = only on request.
+auto_time = ""
+# Two fresh headlines of the default city in the briefing.
+news = true
+
+[[settings]]
+key = "auto_time"
+label = "Утренняя сводка автоматически в"
+type = "time"
+hint = "пусто — только по просьбе"
+restart = true
+
+[[settings]]
+key = "news"
+label = "Новости города в сводке"
+type = "bool"

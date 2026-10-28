@@ -1,0 +1,10 @@
+phrase = [
+    { text = "открой, пожалуйста, телеграм", action = "open" },
+    { text = "открой телеграм", action = "open" },
+    { text = "запусти стим", action = "open" },
+    { text = "открой блокнот", action = "open" },
+    { text = "включи дискорд", action = "open" },
+    { text = "можешь открыть ютуб", action = "open" },
+    { text = "зайди на habr.com", action = "open" },
+    { text = "хочу поиграть в geometry dash", action = "open" },
+]

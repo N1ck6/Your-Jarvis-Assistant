@@ -1,0 +1,6 @@
+phrase = [
+    { text = "режим фокуса", action = "run" },
+    { text = "включи фокус", action = "run" },
+    { text = "хочу поработать", action = "run" },
+    { text = "игровой режим", action = "run" },
+]

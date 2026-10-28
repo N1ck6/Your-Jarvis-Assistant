@@ -2,7 +2,7 @@ import pytest
 
 from assistant.brain import is_info_question
 from assistant.nlu import find_wake, in_place, parse_duration, say_duration, strip_wake, to_nominative, words_to_numbers
-from assistant.skills.explain import parse_deck
+from assistant.skills.explain.main import parse_deck
 from assistant.speech import SentenceSplitter
 from assistant.tts.text_norm import normalize_ru
 

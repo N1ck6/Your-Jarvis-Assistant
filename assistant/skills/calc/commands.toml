@@ -1,0 +1,7 @@
+# Phrases are recognized in main.py. Examples: the commands the router turns free phrases into.
+examples = [
+    "сколько будет <выражение>",
+    "<N> процентов от <M>",
+    "сколько дней до <дата или праздник>",
+    "<N> <единица> в <единица> (мили в километры, фунты в кг, цельсий в фаренгейт)",
+]

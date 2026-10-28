@@ -1,0 +1,9 @@
+[skill]
+id = "calc"
+name = "Калькулятор и даты"
+version = "1.0.0"
+author = "Jarvis"
+description = "Мгновенные ответы без модели: арифметика, проценты, единицы измерения, дни до даты."
+api = 1
+entry = "main:create"
+permissions = []

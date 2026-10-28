@@ -1,0 +1,14 @@
+phrase = [
+    { text = "что играет", action = "now" },
+    { text = "что за песня", action = "now" },
+    { text = "сколько композиций в папке музыка", action = "count" },
+    { text = "сколько треков", action = "count" },
+    { text = "сколько песен у меня в папке с музыкой", action = "count" },
+    { text = "выключи музыку", action = "stop" },
+    { text = "включи I can be more", action = "play" },
+    { text = "поставь believer", action = "play" },
+    { text = "включи песню believer", action = "play" },
+    { text = "включи музыку", action = "shuffle" },
+    { text = "хочу послушать I can be more", action = "play" },
+    { text = "включи что-нибудь", action = "shuffle" },
+]

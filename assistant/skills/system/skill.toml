@@ -1,0 +1,9 @@
+[skill]
+id = "system"
+name = "Системные команды"
+version = "1.0.0"
+author = "Jarvis"
+description = "Служебные команды: стоп, время и дата, повтор, спасибо, микрофон, помощь, выход, шутки."
+api = 1
+entry = "main:create"
+permissions = ["microphone"]

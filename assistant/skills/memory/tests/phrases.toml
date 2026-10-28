@@ -1,0 +1,8 @@
+phrase = [
+    { text = "запомни, что я не ем мясо", action = "remember" },
+    { text = "учти что у меня аллергия на орехи", action = "remember" },
+    { text = "что ты обо мне знаешь", action = "recall" },
+    { text = "что ты запомнил", action = "recall" },
+    { text = "забудь что я не ем мясо", action = "forget" },
+    { text = "забудь всё обо мне", action = "forget_all" },
+]

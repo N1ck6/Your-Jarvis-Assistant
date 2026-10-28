@@ -1,0 +1,8 @@
+phrase = [
+    { text = "что у меня сегодня", action = "day" },
+    { text = "что у меня завтра", action = "day" },
+    { text = "какие у меня встречи", action = "day" },
+    { text = "есть ли созвоны завтра", action = "day" },
+    { text = "покажи календарь", action = "day" },
+    { text = "когда следующая встреча", action = "next" },
+]

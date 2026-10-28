@@ -1,0 +1,8 @@
+phrase = [
+    { text = "сколько будет 15% от 2300", action = "calc" },
+    { text = "посчитай 128 умножить на 7", action = "calc" },
+    { text = "корень из 144", action = "calc" },
+    { text = "сколько дней до нового года", action = "days_to" },
+    { text = "какой день будет через 100 дней", action = "in_days" },
+    { text = "100 миль в километрах", action = "convert" },
+]

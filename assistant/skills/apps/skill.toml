@@ -1,0 +1,9 @@
+[skill]
+id = "apps"
+name = "Запуск приложений и сайтов"
+version = "1.0.0"
+author = "Jarvis"
+description = "Открыть приложение или сайт голосом: меню «Пуск» и свои псевдонимы."
+api = 1
+entry = "main:create"
+permissions = ["apps"]

@@ -59,7 +59,7 @@ def test_alarm_phrases(app, phrase, action):
 
 
 def test_reminder_label_keeps_the_words(app, tmp_path, monkeypatch):
-    import assistant.skills.timers as timers_mod
+    import assistant.skills.timers.main as timers_mod
 
     monkeypatch.setattr(timers_mod, "FILE", tmp_path / "timers.json")
     hit = app.brain.match_skill("напомни завтра в 9 утра про встречу с Олегом")

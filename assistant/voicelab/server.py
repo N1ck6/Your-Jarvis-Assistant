@@ -286,14 +286,14 @@ def create_app(host: Host) -> FastAPI:
     # ------------------------------------------------------------- scenarios / phrases / AI / keys
     @app.get("/api/scenarios")
     def get_scenarios() -> dict:
-        from assistant.skills.scenarios import scenarios_file
+        from assistant.skills.scenarios.main import scenarios_file
 
         path = scenarios_file()
         return {"text": path.read_text(encoding="utf-8"), "path": str(path)}
 
     @app.post("/api/scenarios")
     def post_scenarios(req: TextRequest) -> dict:
-        from assistant.skills.scenarios import scenarios_file
+        from assistant.skills.scenarios.main import scenarios_file
 
         try:
             data = tomllib.loads(req.text)

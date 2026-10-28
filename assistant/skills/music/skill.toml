@@ -1,0 +1,9 @@
+[skill]
+id = "music"
+name = "Музыка из папки"
+version = "1.0.0"
+author = "Jarvis"
+description = "Музыка из папки «Музыка»: плейлисты по подпапкам, песня по названию, настроение."
+api = 1
+entry = "main:create"
+permissions = ["files"]

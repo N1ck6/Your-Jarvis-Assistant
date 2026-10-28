@@ -1,0 +1,9 @@
+[skill]
+id = "dictation"
+name = "Диктовка"
+version = "1.0.0"
+author = "Jarvis"
+description = "Диктовка в активное окно."
+api = 1
+entry = "main:create"
+permissions = ["microphone", "keyboard"]

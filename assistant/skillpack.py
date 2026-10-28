@@ -24,7 +24,7 @@ API_VERSION = 1
 BUILTIN_DIR = Path(__file__).resolve().parent / "skills"
 USER_DIR = DATA_DIR / "skills"
 USER_PACKAGE = "jarvis_skills"   # data/skills/<id>/main.py is imported as jarvis_skills.<id>.main
-PERMISSIONS = {"screen", "clipboard", "cloud_llm", "local_llm", "browser", "files", "power", "keyboard", "network",
+PERMISSIONS = {"screen", "clipboard", "cloud_llm", "local_llm", "browser", "files", "power", "keyboard", "network", "apps",
                "microphone"}
 _ID = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 
@@ -63,7 +63,8 @@ class Manifest:
     after: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)  # other skills it works with (a warning if one is missing)
     permissions: list[str] = field(default_factory=list)
-    config: dict[str, Any] = field(default_factory=dict)          # defaults; the user's values: data/settings.json[id]
+    config: dict[str, Any] = field(default_factory=dict)          # defaults; the user's values: settings.json[config_key]
+    config_key: str = ""             # where the user's values live in data/settings.json (default: id)
     settings: list[dict[str, Any]] = field(default_factory=list)  # fields for the settings page
     examples: list[str] = field(default_factory=list)             # canonical phrases for the router catalog
     commands: list[Command] = field(default_factory=list)
@@ -101,7 +102,12 @@ def read_manifest(folder: Path, builtin: bool) -> Manifest:
                  description=str(skill.get("description", "")), api=api, entry=str(skill.get("entry", "main:create")),
                  before=list(skill.get("before", [])), after=list(skill.get("after", [])),
                  requires=list(skill.get("requires", [])), permissions=list(skill.get("permissions", [])),
-                 config=dict(data.get("config", {})), settings=list(data.get("settings", [])))
+                 config=dict(data.get("config", {})), settings=list(data.get("settings", [])),
+                 config_key=str(skill.get("config_key", sid)))
+    from assistant.config import Settings
+
+    if m.config and m.config_key in Settings.model_fields:
+        raise ManifestError(f"{sid}: config_key «{m.config_key}» занят общими настройками Джарвиса")
     for s in m.settings:
         if s.get("key") not in m.config:
             raise ManifestError(f"{sid}: поле настроек «{s.get('key')}» не описано в [config]")
@@ -265,7 +271,7 @@ def config_for(m: Manifest) -> SkillConfig:
     from assistant.config import load_user_overrides
 
     if m.id not in CONFIGS:
-        CONFIGS[m.id] = SkillConfig(m.config, load_user_overrides().get(m.id) or {})
+        CONFIGS[m.id] = SkillConfig(m.config, load_user_overrides().get(m.config_key) or {})
     return CONFIGS[m.id]
 
 
@@ -277,14 +283,14 @@ def settings_fields(manifests: list[Manifest]):
     for m in manifests:
         for s in m.settings:
             options = [list(o) for o in s.get("options", [])]
-            out.append(F(f"{m.id}.{s['key']}", str(s.get("label", s["key"])), str(s.get("type", "text")),
+            out.append(F(f"{m.config_key}.{s['key']}", str(s.get("label", s["key"])), str(s.get("type", "text")),
                          str(s.get("hint", "")), s.get("min"), s.get("max"), s.get("step"), options,
                          bool(s.get("restart", False))))
     return out
 
 
 def settings_values(manifests: list[Manifest]) -> dict[str, dict[str, Any]]:
-    return {m.id: config_for(m).as_dict() for m in manifests if m.config}
+    return {m.config_key: config_for(m).as_dict() for m in manifests if m.config}
 
 
 SkillChange = tuple[Manifest, str, str, Any]   # (skill, "focus.work_min", "work_min", checked value)
@@ -294,12 +300,12 @@ def split_changes(changes: dict[str, Any],
                   manifests: list[Manifest] | None = None) -> tuple[list[SkillChange], dict[str, Any]]:
     """Changes from the settings page -> (those of folder skills, checked; the rest, for the core settings).
     Raises ValueError on a wrong value of a skill setting. Nothing is saved yet: see save_changes."""
-    by_id = {m.id: m for m in (manifests if manifests is not None else discover())}
+    by_key = {m.config_key: m for m in (manifests if manifests is not None else discover())}
     ours: list[SkillChange] = []
     rest: dict[str, Any] = {}
     for dotted, value in changes.items():
         sid, _, key = dotted.partition(".")
-        m = by_id.get(sid)
+        m = by_key.get(sid)
         if m is None or key not in m.config:
             rest[dotted] = value
             continue

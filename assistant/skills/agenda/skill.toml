@@ -1,0 +1,21 @@
+[skill]
+id = "agenda"
+name = "Календарь"
+version = "1.0.0"
+author = "Jarvis"
+description = "Календарь из закрытых ссылок iCal: Google, Outlook, Яндекс (только чтение)."
+api = 1
+entry = "main:create"
+permissions = ["network"]
+config_key = "calendar"   # the user's links are kept under "calendar" in data/settings.json
+
+[config]
+# Secret iCal links: Google Calendar -> Settings -> "Secret address in iCal format".
+ics_urls = []
+cache_min = 10
+
+[[settings]]
+key = "ics_urls"
+label = "Ссылки на календари (iCal)"
+type = "list"
+hint = "Google Календарь → Настройки → Закрытый адрес в формате iCal"

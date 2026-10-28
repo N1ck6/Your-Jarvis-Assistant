@@ -144,27 +144,6 @@ class MusicCfg(BaseModel):
     duck_volume: float = 0.2    # share of the volume while Jarvis listens or speaks
 
 
-class CalendarCfg(BaseModel):
-    ics_urls: list[str] = Field(default_factory=list)
-    cache_min: int = 10
-
-
-class BriefingCfg(BaseModel):
-    auto_time: str = ""                # "08:30" = say the briefing automatically every day
-    news: bool = True                  # two headlines of the default city in the briefing
-
-
-class NewsCfg(BaseModel):
-    feeds: dict[str, str] = Field(default_factory=dict)   # city / "главное" -> RSS url (default: Google News)
-    cache_min: int = 10
-    spoken: int = 2
-
-
-class SearchCfg(BaseModel):
-    default: str = "yandex"
-    engines: dict[str, str] = Field(default_factory=dict)
-
-
 class ExplainCfg(BaseModel):
     provider: str = "local"
     max_cards: int = 5
@@ -217,10 +196,6 @@ class Settings(BaseModel):
     explain: ExplainCfg = Field(default_factory=ExplainCfg)
     notes: NotesCfg = Field(default_factory=NotesCfg)
     music: MusicCfg = Field(default_factory=MusicCfg)
-    calendar: CalendarCfg = Field(default_factory=CalendarCfg)
-    briefing: BriefingCfg = Field(default_factory=BriefingCfg)
-    news: NewsCfg = Field(default_factory=NewsCfg)
-    search: SearchCfg = Field(default_factory=SearchCfg)
     web: WebCfg = Field(default_factory=WebCfg)
     ui: UiCfg = Field(default_factory=UiCfg)
     privacy: PrivacyCfg = Field(default_factory=PrivacyCfg)

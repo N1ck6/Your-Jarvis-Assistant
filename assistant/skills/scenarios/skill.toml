@@ -1,0 +1,9 @@
+[skill]
+id = "scenarios"
+name = "Мои сценарии"
+version = "1.0.0"
+author = "Jarvis"
+description = "Свои сценарии «фраза → действия» из data/scenarios.toml (трей → «Мои сценарии…»)."
+api = 1
+entry = "main:create"
+permissions = ["apps", "keyboard"]

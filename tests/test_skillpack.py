@@ -19,6 +19,8 @@ def app():
     a.skills = load_skills(a.cfg.skills.enabled, a.cfg.skills.disabled)
     for s in a.skills:
         s.setup(a)
+    music = next(s for s in a.skills if s.name == "music")   # the same songs as in tests/test_skills.py
+    music.tracks = lambda: {"i can be more": "C:/music/I can be more.mp3", "believer": "C:/music/Believer.mp3"}
     a.brain = Brain(a, a.skills)
     return a
 
@@ -52,7 +54,8 @@ def test_builtin_folder_skills_load(app):
     loaded = {s.name: s for s in app.skills}
     for m in BUILTIN:
         assert m.id in loaded, f"{m.id} не загрузился"
-        assert loaded[m.id].manifest.path == m.path and loaded[m.id].examples == m.examples
+        assert loaded[m.id].manifest.path == m.path
+        assert not m.examples or loaded[m.id].examples == m.examples   # scenarios: examples from the code
 
 
 @pytest.mark.parametrize("phrase,expected", [(p, a) for m in BUILTIN for p, a in m.test_phrases()])
@@ -152,7 +155,8 @@ HELLO_CODE = """
 def test_user_skill_from_folder(tmp_path, settings_file):
     write_skill(tmp_path / "skills", "hello", HELLO, HELLO_COMMANDS, HELLO_CODE, "Я Джарвис.")
     a = FakeApp()
-    a.skills = load_skills(["calc", "apps"], disabled=BUILTIN_IDS, user_dir=tmp_path / "skills")
+    others = [i for i in BUILTIN_IDS if i not in ("calc", "apps")]
+    a.skills = load_skills(["calc", "apps"], disabled=others, user_dir=tmp_path / "skills")
     for s in a.skills:
         s.setup(a)
     assert [s.name for s in a.skills] == ["hello", "calc", "apps"]

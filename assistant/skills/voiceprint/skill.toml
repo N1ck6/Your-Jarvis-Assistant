@@ -1,0 +1,9 @@
+[skill]
+id = "voiceprint"
+name = "Голос владельца"
+version = "1.0.0"
+author = "Jarvis"
+description = "Голос владельца: запомнить, забыть, проверить."
+api = 1
+entry = "main:create"
+permissions = ["microphone"]

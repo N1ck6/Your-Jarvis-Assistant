@@ -1,0 +1,6 @@
+phrase = [
+    { text = "диктовка", action = "start" },
+    { text = "пиши под диктовку", action = "start" },
+    { text = "запиши текст", action = "start" },
+    { text = "напечатай привет, буду через 10 минут", action = "type" },
+]

@@ -1,0 +1,7 @@
+phrase = [
+    { text = "заблокируй компьютер", action = "lock" },
+    { text = "спящий режим", action = "sleep" },
+    { text = "выключи компьютер через час", action = "off" },
+    { text = "перезагрузи компьютер", action = "reboot" },
+    { text = "отмени выключение", action = "cancel" },
+]

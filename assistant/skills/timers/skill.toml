@@ -1,0 +1,9 @@
+[skill]
+id = "timers"
+name = "Таймеры и напоминания"
+version = "1.0.0"
+author = "Jarvis"
+description = "Таймеры, будильники и напоминания с повторами; переживают перезапуск."
+api = 1
+entry = "main:create"
+permissions = []

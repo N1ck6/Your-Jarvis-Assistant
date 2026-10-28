@@ -1,0 +1,17 @@
+phrase = [
+    { text = "закрой телеграм", action = "close" },
+    { text = "закрой браузер", action = "close" },
+    { text = "закрой это окно", action = "close" },
+    { text = "выключи стим", action = "close" },
+    { text = "сверни всё", action = "minimize_all" },
+    { text = "покажи рабочий стол", action = "minimize_all" },
+    { text = "сверни окно", action = "minimize" },
+    { text = "разверни хром на весь экран", action = "maximize" },
+    { text = "на весь экран", action = "maximize" },
+    { text = "переключись на телеграм", action = "switch" },
+    { text = "перейди в браузер", action = "switch" },
+    { text = "какие окна открыты", action = "list" },
+    { text = "убей процесс хром", action = "kill" },
+    { text = "выключи компьютерную игру", action = "close" },
+    { text = "закрой телеграм", action = "close" },
+]

@@ -85,7 +85,7 @@ def test_spoken_formula_without_a_model(phrase, expr, x, y):
 
 
 def test_graph_of_weather_is_not_a_function_graph():
-    from assistant.skills.visual import VisualSkill
+    from assistant.skills.visual.main import VisualSkill
 
     assert VisualSkill().match("график погоды") is None
     assert VisualSkill().match("покажи мне график x квадрат минус 3 x") is not None

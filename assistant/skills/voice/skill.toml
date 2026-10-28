@@ -1,0 +1,9 @@
+[skill]
+id = "voice"
+name = "Настройки голоса"
+version = "1.0.0"
+author = "Jarvis"
+description = "Голос Джарвиса: страница выбора голоса, скорость речи."
+api = 1
+entry = "main:create"
+permissions = []

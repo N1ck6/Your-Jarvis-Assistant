@@ -1,0 +1,9 @@
+[skill]
+id = "explain"
+name = "Объяснение в окне"
+version = "1.0.0"
+author = "Jarvis"
+description = "Объяснения карточками: текст на экране, голос объясняет своими словами."
+api = 1
+entry = "main:create"
+permissions = ["local_llm", "cloud_llm"]

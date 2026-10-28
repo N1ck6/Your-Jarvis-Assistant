@@ -1,0 +1,9 @@
+[skill]
+id = "visual"
+name = "Картинка к объяснению"
+version = "1.0.0"
+author = "Jarvis"
+description = "Картинки к вопросам: молекулы, графики функций, геометрия."
+api = 1
+entry = "main:create"
+permissions = ["network"]

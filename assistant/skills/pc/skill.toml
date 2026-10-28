@@ -1,0 +1,9 @@
+[skill]
+id = "pc"
+name = "Компьютер и файлы"
+version = "1.0.0"
+author = "Jarvis"
+description = "Состояние компьютера и файлы только для чтения: диск, память, процессор, батарея, IP, поиск файлов."
+api = 1
+entry = "main:create"
+permissions = ["files"]

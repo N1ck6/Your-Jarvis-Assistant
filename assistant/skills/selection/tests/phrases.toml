@@ -1,0 +1,14 @@
+phrase = [
+    { text = "переведи", action = "translate" },
+    { text = "переведи выделенное на английский", action = "translate" },
+    { text = "переведи это", action = "translate" },
+    { text = "объясни выделенное", action = "explain" },
+    { text = "что это значит", action = "explain" },
+    { text = "перескажи", action = "summary" },
+    { text = "сократи этот текст", action = "summary" },
+    { text = "исправь ошибки", action = "fix" },
+    { text = "проверь орфографию", action = "fix" },
+    { text = "перепиши вежливо", action = "rewrite" },
+    { text = "прочитай выделенное", action = "read" },
+    { text = "озвучь это", action = "read" },
+]

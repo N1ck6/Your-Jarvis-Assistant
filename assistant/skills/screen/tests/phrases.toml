@@ -1,0 +1,12 @@
+phrase = [
+    { text = "что на экране", action = "help" },
+    { text = "что у меня на экране?", action = "help" },
+    { text = "посмотри на экран", action = "help" },
+    { text = "помоги с этим", action = "help" },
+    { text = "что тут написано", action = "help" },
+    { text = "что это за ошибка", action = "help" },
+    { text = "переведи текст на экране", action = "help" },
+    { text = "сделай скриншот", action = "help" },
+    { text = "скопируй текст с экрана", action = "ocr" },
+    { text = "распознай текст на экране", action = "ocr" },
+]

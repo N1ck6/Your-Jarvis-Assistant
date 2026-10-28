@@ -213,3 +213,147 @@ def test_settings_api_reads_and_writes_skill_settings(settings_file):
     assert client.post("/api/settings", json={"changes": {"focus.rounds": 6}}).status_code == 200
     assert client.get("/api/settings").json()["values"]["focus"]["rounds"] == 6
     assert client.post("/api/settings", json={"changes": {"focus.rounds": "x"}}).status_code == 400
+
+
+# ---------------------------------------------------------------- prompt skills (assistant/prompting.py)
+class FakeLlm:
+    def __init__(self, answer, provider="local"):
+        self.answer, self.last_provider, self.sent = answer, provider, []
+
+    async def complete(self, chain, messages, **kw):
+        self.sent.append((chain, messages, kw))
+        return self.answer
+
+    async def stream(self, chain, messages, **kw):
+        self.sent.append((chain, messages, kw))
+        yield self.answer
+
+
+def prompted(app, monkeypatch, name, answer, selected="", provider="local"):
+    """The skill with a fake model, a fake selection; windows, clipboard and pasting are recorded."""
+    skill = next(s for s in app.skills if s.name == name)
+    llm, seen = FakeLlm(answer, provider), {"cards": [], "clipboard": [], "pasted": []}
+    monkeypatch.setattr(app, "llm", llm, raising=False)
+    monkeypatch.setattr(app.ui, "show_deck", lambda d: seen["cards"].append((d.title, d.cards[0].screen)))
+
+    async def selection():
+        return selected
+
+    async def clip(text):
+        seen["clipboard"].append(text)
+
+    async def paste(text):
+        seen["pasted"].append(text)
+
+    monkeypatch.setattr(skill.ctx, "selection", selection)
+    monkeypatch.setattr(skill.ctx, "set_clipboard", clip)
+    monkeypatch.setattr(skill.ctx, "paste", paste)
+    return skill, llm, seen
+
+
+def say(skill, phrase):
+    from assistant.nlu import normalize_command
+
+    async def run():
+        intent = skill.match(normalize_command(phrase))
+        intent.raw = phrase
+        reply = await skill.handle(intent)
+        return reply.speech or ("".join([d async for d in reply.stream]) if reply.stream else "")
+    return asyncio.run(run())
+
+
+def test_translate_selection(app, monkeypatch):
+    skill, llm, seen = prompted(app, monkeypatch, "selection", "Привет, мир", selected="Hello, world")
+    assert say(skill, "переведи") == "Привет, мир"                       # into Russian and short: read aloud
+    chain, messages, _ = llm.sent[0]
+    assert chain == ["local"] and "на русский язык" in messages[0].content and messages[1].content == "Hello, world"
+    assert seen["clipboard"] == ["Привет, мир"] and seen["cards"] == [("Перевод · русский", "Привет, мир")]
+
+    skill, llm, seen = prompted(app, monkeypatch, "selection", "Hello", selected="Привет")
+    assert say(skill, "переведи выделенное") == "Перевод на экране и в буфере обмена."
+    assert "на английский язык" in llm.sent[0][1][0].content
+
+
+def test_fix_replaces_selection_and_empty_selection(app, monkeypatch):
+    skill, llm, seen = prompted(app, monkeypatch, "selection", "Привет, как дела?", selected="привет как дила")
+    assert say(skill, "исправь ошибки") == "Готово." and seen["pasted"] == ["Привет, как дела?"]
+    skill, llm, seen = prompted(app, monkeypatch, "selection", "-", selected="")
+    assert say(skill, "перепиши вежливо") == "Сначала выделите текст, а потом скажите, что с ним сделать."
+    assert llm.sent == []
+
+
+def test_read_selection_without_model(app, monkeypatch):
+    skill, llm, _ = prompted(app, monkeypatch, "selection", "-", selected="Текст для чтения")
+    assert say(skill, "прочитай выделенное") == "Текст для чтения" and llm.sent == []
+
+
+def test_ocr_nothing_found(app, monkeypatch):
+    skill, llm, seen = prompted(app, monkeypatch, "screen", "НЕТ", provider="gemini")
+    skill.ctx.share("screen.region", b"old")
+    monkeypatch.setattr(app.ui, "select_region", lambda: _done(b"png"))
+    assert say(skill, "скопируй текст с экрана") == "Текста в этой области не нашёл."
+    assert llm.sent[0][0] == ["gemini", "local"] and llm.sent[0][1][0].images == [b"png"]
+    assert seen["clipboard"] == []
+
+
+def _done(value):
+    import concurrent.futures
+
+    fut = concurrent.futures.Future()
+    fut.set_result(value)
+    return fut
+
+
+PROMPT_SKILL = """
+    [skill]
+    id = "joke"
+    name = "Шутка про"
+    api = 1
+    entry = ""
+"""
+PROMPT_COMMANDS = """
+    examples = ["пошути про <тема>"]
+
+    [[command]]
+    action = "joke"
+    patterns = ['^пошути про ']
+    source = "said"
+    prompt = "joke"
+    chain = "info"
+    output = "card"
+    title = "Шутка"
+    speak_max = 300
+"""
+
+
+def test_prompt_skill_without_code(tmp_path, settings_file):
+    folder = write_skill(tmp_path, "joke", PROMPT_SKILL, PROMPT_COMMANDS)
+    (folder / "prompts").mkdir()
+    (folder / "prompts" / "joke.md").write_text("Короткая шутка по просьбе: «{phrase}».", encoding="utf-8")
+    a = FakeApp()
+    a.skills = load_skills([], disabled=BUILTIN_IDS, user_dir=tmp_path)
+    for s in a.skills:
+        s.setup(a)
+    skill = a.skills[0]
+    llm, cards = FakeLlm("Программист заходит в бар…", "groq"), []
+    a.llm = llm
+    a.ui.show_deck = lambda d: cards.append(d.title)
+    assert say(skill, "Пошути про котов") == "Программист заходит в бар…"
+    chain, messages, _ = llm.sent[0]
+    assert chain == a.cfg.llm.info_chain and messages[0].content == "Короткая шутка по просьбе: «Пошути про котов»."
+    assert messages[1].content == "Пошути про котов" and cards == ["Шутка"]
+
+
+@pytest.mark.parametrize("old,new,error", [
+    ("", "", "нет файла prompts/joke.md"),
+    ('output = "card"', 'output = "poster"', "output"),
+    ('output = "card"', 'colour = "red"', "неизвестное поле"),
+    ('chain = "info"', 'chain = "@missing"', "не описано в"),
+])
+def test_bad_prompt_command(tmp_path, old, new, error):
+    folder = write_skill(tmp_path, "joke", PROMPT_SKILL, PROMPT_COMMANDS.replace(old, new) if old else PROMPT_COMMANDS)
+    if old:
+        (folder / "prompts").mkdir()
+        (folder / "prompts" / "joke.md").write_text("x", encoding="utf-8")
+    with pytest.raises(skillpack.ManifestError, match=error):
+        skillpack.read_manifest(folder, builtin=False)

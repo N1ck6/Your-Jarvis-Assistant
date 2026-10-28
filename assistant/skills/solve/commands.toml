@@ -1,3 +1,38 @@
-# Phrases are recognized in main.py: it also decides where the task is (screen, selection, the phrase itself).
+# Where the task is, is decided in main.py (match): the action names the source. Everything else is a prompt
+# command: the cloud model solves, the answer is shown as "Решение" and "Ответ" in two windows.
 examples = ["реши задачу с экрана", "реши выделенную задачу", "реши эту задачу", "реши задачу <условие задачи>",
             "найди икс <уравнение>"]
+
+# Shared by every command below.
+[defaults]
+prompt = "solve"
+chain = "@chain"
+image_chain = "@image_chain"
+models = "@gemini_models"
+local_fallback = "@local_fallback"
+local_warning = true
+output = "solution_answer"
+say_first = "Решаю. "
+max_tokens = 3000
+nothing = "НЕТ ЗАДАЧИ"
+nothing_reply = "Задачи здесь не вижу."
+fail_reply = "Не получилось решить: облако сейчас не отвечает."
+
+[[command]]
+action = "screen"
+source = "screen"
+
+[[command]]
+action = "selection"
+source = "selection"
+empty_reply = "Сначала выделите задачу, а потом скажите «реши»."
+
+[[command]]
+action = "said"
+source = "said"
+
+# "реши эту задачу": the region of "что на экране" (if recent), else the selection, else a new region.
+[[command]]
+action = "auto"
+source = "auto"
+recent_sec = "@region_ttl_sec"

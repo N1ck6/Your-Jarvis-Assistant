@@ -1,0 +1,9 @@
+[skill]
+id = "selection"
+name = "Выделенный текст"
+version = "1.0.0"
+author = "Jarvis"
+description = "Перевести, объяснить, пересказать, исправить, переписать или прочитать текст, выделенный в любом окне."
+api = 1
+entry = "main:create"
+permissions = ["clipboard", "keyboard", "local_llm"]

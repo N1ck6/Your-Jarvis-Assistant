@@ -35,10 +35,17 @@ class ManifestError(ValueError):
 
 @dataclass
 class Command:
-    """A trigger from commands.toml: the first pattern that matches the normalized phrase gives the action."""
+    """A command from commands.toml: the first pattern that matches the normalized phrase gives the action.
+    Without code it either answers with `reply` or, with `options` (source, prompt, chain, output...), asks a model:
+    assistant/prompting.py."""
     action: str
     patterns: list[re.Pattern[str]]
-    reply: str = ""   # a fixed answer: such a command needs no code at all
+    reply: str = ""
+    options: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def prompted(self) -> bool:
+        return bool(self.options)
 
 
 @dataclass
@@ -103,15 +110,34 @@ def read_manifest(folder: Path, builtin: bool) -> Manifest:
         try:
             cmds = tomllib.loads(commands_file.read_text(encoding="utf-8"))
             m.examples = [str(e) for e in cmds.get("examples", [])]
-            m.commands = [Command(str(c["action"]), [re.compile(p) for p in c.get("patterns", [])], str(c.get("reply", "")))
+            defaults = dict(cmds.get("defaults", {}))  # fields shared by every command of the file
+            m.commands = [Command(str(c["action"]), [re.compile(p) for p in c.get("patterns", [])], str(c.get("reply", "")),
+                                  {**defaults, **{k: v for k, v in c.items() if k not in ("action", "patterns", "reply")}})
                           for c in cmds.get("command", [])]
         except (tomllib.TOMLDecodeError, KeyError, re.error) as exc:
             raise ManifestError(f"{sid}/commands.toml: {exc}") from exc
+    _check_commands(m)
     if m.entry and not (folder / (m.entry.split(":")[0].replace(".", "/") + ".py")).exists():
         raise ManifestError(f"{sid}: нет файла кода для entry = «{m.entry}»")
-    if not m.entry and not any(c.reply for c in m.commands):
-        raise ManifestError(f"{sid}: навык без кода должен отвечать хотя бы на одну команду (reply)")
+    if not m.entry and not any(c.reply or c.prompted for c in m.commands):
+        raise ManifestError(f"{sid}: навык без кода должен отвечать хотя бы на одну команду (reply или prompt)")
     return m
+
+
+def _check_commands(m: Manifest) -> None:
+    from assistant import prompting
+
+    for c in m.commands:
+        if not c.prompted:
+            continue
+        problems = prompting.check(c)
+        if "prompt" in c.options and not (m.path / "prompts" / f"{c.options['prompt']}.md").is_file():
+            problems.append(f"нет файла prompts/{c.options['prompt']}.md")
+        for value in c.options.values():
+            if isinstance(value, str) and value.startswith("@") and value[1:] not in m.config:
+                problems.append(f"«{value}» не описано в [config]")
+        if problems:
+            raise ManifestError(f"{m.id}/commands.toml, команда {c.action}: " + "; ".join(problems))
 
 
 def discover(user_dir: Path | None = None) -> list[Manifest]:

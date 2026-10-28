@@ -103,18 +103,6 @@ CASES = [
     # --- dictation
     ("диктовка", "dictation", "start"), ("пиши под диктовку", "dictation", "start"), ("запиши текст", "dictation", "start"),
     ("напечатай привет, буду через 10 минут", "dictation", "type"),
-    # --- selected text
-    ("переведи", "selection", "translate"), ("переведи выделенное на английский", "selection", "translate"),
-    ("переведи это", "selection", "translate"), ("объясни выделенное", "selection", "explain"),
-    ("что это значит", "selection", "explain"), ("перескажи", "selection", "summary"),
-    ("сократи этот текст", "selection", "summary"), ("исправь ошибки", "selection", "fix"),
-    ("проверь орфографию", "selection", "fix"), ("перепиши вежливо", "selection", "rewrite"),
-    ("прочитай выделенное", "selection", "read"), ("озвучь это", "selection", "read"),
-    # --- screen
-    ("что на экране", "screen", "help"), ("что у меня на экране?", "screen", "help"),
-    ("посмотри на экран", "screen", "help"), ("помоги с этим", "screen", "help"),
-    ("что тут написано", "screen", "help"), ("что это за ошибка", "screen", "help"),
-    ("переведи текст на экране", "screen", "help"), ("сделай скриншот", "screen", "help"),
     # --- notes & lists
     ("добавь в список покупок молоко и хлеб", "notes", "add"), ("запиши в список дел позвонить врачу", "notes", "add"),
     ("купить молоко", "notes", "add"), ("надо купить батарейки", "notes", "add"),
@@ -351,7 +339,6 @@ def test_weather_followup_ignores_other_phrases(app):
     ("заблокируй компьютер", "power", "lock"), ("спящий режим", "power", "sleep"),
     ("выключи компьютер через час", "power", "off"), ("перезагрузи компьютер", "power", "reboot"),
     ("отмени выключение", "power", "cancel"),
-    ("скопируй текст с экрана", "screen", "ocr"), ("распознай текст на экране", "screen", "ocr"),
     ("новости", "news", "news"), ("что нового в Москве", "news", "news"), ("новости технологий", "news", "news"),
     ("запомни мой голос", "voiceprint", "enroll"), ("забудь мой голос", "voiceprint", "forget"),
     ("ты узнаешь мой голос", "voiceprint", "check"),
@@ -401,7 +388,7 @@ SOLVED = r"""**Решение:**
 
 
 def test_solution_is_plain_text():
-    from assistant.skills.solve.main import split_solution
+    from assistant.plaintext import split_solution
 
     solution, answer = split_solution(SOLVED)
     assert solution == "1. Скорость сближения: 60 + 80 = 140 км/ч.\n2. Время: t = 420/140 = 3 ч.\nЗначит, встретятся через 3 часа."
@@ -417,13 +404,13 @@ def test_solution_is_plain_text():
     ("x = 7 - 2\n5", "5"),                                         # no headers: the last line is the answer
 ])
 def test_answer_is_bare(raw, answer):
-    from assistant.skills.solve.main import split_solution
+    from assistant.plaintext import split_solution
 
     assert split_solution(raw)[1] == answer
 
 
 def test_spoken_answer():
-    from assistant.skills.solve.main import spoken
+    from assistant.plaintext import spoken
 
     assert spoken("x² = 4; x = ±2") == "x в квадрате = 4, x = плюс минус 2"
 

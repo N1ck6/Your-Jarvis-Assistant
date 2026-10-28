@@ -1,0 +1,26 @@
+# Phrases are recognized in main.py (many ways to say "screen"). Both commands are prompt commands: the user selects
+# a region of a freeze-frame of the screen, the picture goes to a model with vision. Hotkey: Ctrl+Alt+S.
+# The region is shared as "screen.region": "реши эту задачу" right after solves it.
+examples = ["что на экране", "скопируй текст с экрана"]
+
+[defaults]
+source = "screen"
+chain = "vision"
+
+[[command]]
+action = "help"
+prompt = "help"
+output = "speak"
+max_tokens = 500
+
+[[command]]
+action = "ocr"
+prompt = "ocr"
+output = "clipboard"
+title = "Текст с экрана"
+max_tokens = 1500
+nothing = "НЕТ"
+nothing_reply = "Текста в этой области не нашёл."
+reply = "Текст в буфере обмена."
+reaction = "ok"
+listen_after = false

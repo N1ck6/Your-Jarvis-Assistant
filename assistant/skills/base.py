@@ -98,9 +98,17 @@ class Skill(ABC):
         """A short follow-up to this skill's previous command ("а завтра?", "а в Сочи?") -> updated intent."""
         return None
 
+    def prepare(self, intent: Intent, text: str) -> dict[str, Any]:
+        """A prompt command got its text (selected, said): more slots for the prompt, e.g. the target language."""
+        return {}
+
     async def handle(self, intent: Intent) -> Reply:
-        """A command of commands.toml with a fixed reply needs no code."""
+        """A command of commands.toml with a prompt or a fixed reply needs no code (assistant/prompting.py)."""
         command = next((c for c in self.manifest.commands if c.action == intent.action), None) if self.manifest else None
+        if command is not None and command.prompted:
+            from assistant import prompting
+
+            return await prompting.run(self, command, intent)
         if command is not None and command.reply:
             return Reply(command.reply)
         raise NotImplementedError
@@ -198,6 +206,12 @@ class Context:
         from assistant import winutil
 
         await run_blocking(winutil.set_clipboard_text, text)
+
+    async def paste(self, text: str) -> None:
+        """Types text into the foreground window (over the selection, if any); the clipboard is restored."""
+        from assistant import winutil
+
+        await run_blocking(winutil.paste_text, text)
 
     # ---------------------------------------------------------------- between skills
     def share(self, key: str, value: Any) -> None:

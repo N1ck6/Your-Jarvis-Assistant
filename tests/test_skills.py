@@ -46,7 +46,7 @@ def app():
     for s in a.skills:
         s.setup(a)
     music = next(s for s in a.skills if s.name == "music")
-    music.tracks = lambda: {"i can be more": "C:/music/I can be more.mp3", "believer": "C:/music/Believer.mp3"}
+    music.tracks = lambda *_: {"i can be more": "C:/music/I can be more.mp3", "believer": "C:/music/Believer.mp3"}
     a.brain = Brain(a, a.skills)
     return a
 

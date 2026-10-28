@@ -1,6 +1,7 @@
 """Built-in music player (miniaudio): mp3/flac/wav/ogg without external apps or playlist files.
 
 Supports pause/resume/next/prev/stop and ducking: music gets quieter while Jarvis listens or speaks.
+Listeners hear about every change of state or track (the Windows mini player: assistant/audio/media_session.py).
 """
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ import array
 import logging
 import threading
 from pathlib import Path
+from typing import Callable
 
 import miniaudio
 import numpy as np
@@ -56,6 +58,8 @@ class MusicPlayer:
         from assistant.audio.aec import REFERENCE
 
         self._ref = REFERENCE.stream()   # what the music sends to the speakers, for the echo canceller
+        # Called on any change of state or track, from any thread (also the audio callback): must return at once.
+        self.listeners: list[Callable[[], None]] = []
 
     # ------------------------------------------------------------------ public API
     @property
@@ -66,22 +70,34 @@ class MusicPlayer:
     def current(self) -> Path | None:
         return self.queue[self.index] if 0 <= self.index < len(self.queue) else None
 
-    def play(self, queue: list[Path], start: int = 0) -> None:
+    def play(self, queue: list[Path], start: int = 0) -> bool:
+        """False: not one file of the queue could be opened (nothing plays)."""
         with self._lock:
             self.queue = list(queue)
-            self._open(start)
+            for i in range(len(self.queue)):  # a broken first file: the next one plays
+                self._open((start + i) % len(self.queue))
+                if self._stream is not None:
+                    break
+            if self._stream is None:
+                self.state = "stopped"
+                self._changed()
+                return False
             self.state = "playing"
         self._ensure_device()
+        self._changed()
+        return True
 
     def pause(self) -> None:
         with self._lock:
             if self.state == "playing":
                 self.state = "paused"
+        self._changed()
 
     def resume(self) -> None:
         with self._lock:
             if self.state == "paused":
                 self.state = "playing"
+        self._changed()
 
     def toggle(self) -> None:
         self.pause() if self.state == "playing" else self.resume()
@@ -91,12 +107,14 @@ class MusicPlayer:
             if self.queue:
                 self._open((self.index + 1) % len(self.queue))
                 self.state = "playing"
+        self._changed()
 
     def prev(self) -> None:
         with self._lock:
             if self.queue:
                 self._open((self.index - 1) % len(self.queue))
                 self.state = "playing"
+        self._changed()
 
     def stop(self) -> None:
         with self._lock:
@@ -105,6 +123,7 @@ class MusicPlayer:
         if self._device is not None:
             self._device.close()
             self._device = None
+        self._changed()
 
     def duck(self, on: bool) -> None:
         self._ducked = on
@@ -121,6 +140,13 @@ class MusicPlayer:
             log.info("Музыка переключена на новое устройство")
 
     # ------------------------------------------------------------------ internals
+    def _changed(self) -> None:
+        for listener in self.listeners:
+            try:
+                listener()
+            except Exception:
+                log.exception("Музыка: слушатель изменений")
+
     def _open(self, index: int) -> None:
         self.index = index
         path = self.queue[index]
@@ -175,6 +201,8 @@ class MusicPlayer:
             if self.index + 1 >= len(self.queue):
                 self.state = "stopped"  # end of the queue
                 self._stream = None
+                self._changed()
                 return None
             self._open(self.index + 1)
+            self._changed()
         return None

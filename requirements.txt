@@ -34,6 +34,14 @@ google-genai>=1.0
 openai>=1.40
 ollama>=0.4
 
+# Jarvis's music in the Windows mini player and on the media keys (WinRT media controls)
+winrt-runtime>=3.0
+winrt-Windows.Foundation>=3.0
+winrt-Windows.Media>=3.0
+winrt-Windows.Media.Playback>=3.0
+winrt-Windows.Storage>=3.0
+winrt-Windows.Storage.Streams>=3.0
+
 # Russian morphology (city names, numbers)
 pymorphy3>=2.0
 pymorphy3-dicts-ru>=2.4

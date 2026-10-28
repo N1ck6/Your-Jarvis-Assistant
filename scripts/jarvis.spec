@@ -6,7 +6,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = Path(SPECPATH).parent
 
-hidden = (collect_submodules("assistant") + collect_submodules("onnx_asr") + collect_submodules("pymorphy3")
+hidden = (collect_submodules("assistant") + collect_submodules("onnx_asr") + collect_submodules("pymorphy3") + collect_submodules("winrt")
           + ["pymorphy3_dicts_ru", "win32timezone", "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
              "uvicorn.lifespan.on"])
 datas = (collect_data_files("assistant", includes=["voicelab/static/*", "ui/icon.svg", "skills/*/*.toml",

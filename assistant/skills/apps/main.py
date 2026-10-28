@@ -71,7 +71,7 @@ class AppsSkill(Skill):
         m = _OPEN.match(text.strip(" .!?"))
         if not m:
             return None
-        name = re.split(r"[,;]|пожалуйста|чтобы", m.group("name"))[0].strip(" .!?")
+        name = re.split(r"[,;]|\bпожалуйста\b|\bчтобы\b", m.group("name"))[0].strip(" .!?")
         if name in _NOT_APPS:
             return None
         return Intent(self.name, "open", {"name": name}, text)

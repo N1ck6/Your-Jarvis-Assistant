@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Callable
 
-from assistant import skillpack
+from assistant import errors, skillpack
 from assistant.audio import earcons
 from assistant.audio.music import MusicPlayer
 from assistant.audio.listener import ListenerCore, ListenerEvents, Microphone, Mode, Utterance
@@ -131,6 +131,9 @@ class Assistant:
         self.pack: VoicePack | None = load_pack(cfg.voice.pack)
         self.player = Player(cfg.audio.output_device, cfg.tts.volume)
         self.music = MusicPlayer(cfg.music.volume, cfg.music.duck_volume)
+        from assistant.audio.media_session import MediaSession
+
+        self.media_session = MediaSession(self.music)  # the Windows mini player and media keys control the music
         self.speaker = Speaker(self.tts, self.player, on_start=self._on_speech_start, on_end=self._on_speech_end)
         self.skills = load_skills(cfg.skills.enabled, cfg.skills.disabled)
         for skill in self.skills:
@@ -918,14 +921,21 @@ class Assistant:
             self.brain.deferred.clear()
             self.brain.extra.clear()
             raise
-        except Exception:
+        except Exception as exc:
             log.exception("Ошибка обработки запроса")
-            self._earcon(earcons.ERROR)
-            await self.speaker.say("Что-то пошло не так, подробности в логе.")
+            await self._deliver(Reply(f"Не получилось: {errors.explain(exc)}.", error=True), started, query)
         if self._task is asyncio.current_task():
             self._after_answer(listen_after, expect_answer=self.brain.expects_answer())
 
+    def progress(self, what: str) -> None:
+        """A request is being worked on: the icon stays "thinking" and the tray tooltip says what is being done."""
+        self._set_state(State.THINKING, f"{what}…")
+
     async def _deliver(self, reply: Reply, started: float, query: str = "") -> bool:
+        if reply.error:
+            # Said in a few words, also in the tray: the user is never left with a silent stop.
+            self._earcon(earcons.ERROR)
+            self.ui.notify("Джарвис: не получилось", reply.speech)
         if reply.spoken:
             return reply.listen_after
         text = ""

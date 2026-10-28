@@ -1,6 +1,7 @@
 """Request routing: skill fast path -> cloud (facts / internet) -> local model with tools."""
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import logging
@@ -9,10 +10,11 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable
 
+from assistant import errors
 from assistant.llm.hub import FAIL_TEXT
 from assistant.llm.providers import LocalTurn, Msg
 from assistant.log import private
-from assistant.nlu import NO, YES, normalize_command, split_compound
+from assistant.nlu import NO, YES, looks_like_command, normalize_command, split_compound
 from assistant.router import Router, Turn
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
@@ -338,10 +340,14 @@ class Brain:
         if decision is None:
             decision = await self.router.route(text, list(self.turns), addressed=addressed)
         if decision and decision.kind == "ignore" and fallback is None:
-            if not addressed:
+            if addressed:
+                return Reply("Не расслышал, повторите.")
+            if not looks_like_command(norm):
                 log.info("Похоже, это сказано не мне — молчу")
                 return Reply(spoken=True, listen_after=False)
-            return Reply("Не расслышал, повторите.")
+            # "поставь что-нибудь спокойное" right after an answer: a request, even if the router doubted it
+            log.info("Маршрутизатор решил, что это не мне, но это похоже на просьбу — отвечаю")
+            decision = None
         if decision and decision.kind == "commands":
             hits = [self.match_skill(c) for c in decision.commands]
             if all(hits):
@@ -375,7 +381,16 @@ class Brain:
         meta = all(skill.name == "system" and intent.action in _META for skill, intent in hits)
         for skill, intent in hits:
             log.info("Модуль %s.%s %s", skill.name, intent.action, private(intent.slots or ""))
-            reply = await skill.handle(intent)
+            progress = getattr(self.app, "progress", None)
+            if progress is not None:
+                progress(skill.title or skill.name)  # the icon stays "thinking", the tray says what is being done
+            try:
+                reply = await skill.handle(intent)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.exception("Модуль %s.%s: ошибка", skill.name, intent.action)
+                reply = Reply(f"Не получилось — {skill.title or skill.name}: {errors.explain(exc)}.", error=True)
             self._remember_confirm(reply)
             replies.append(reply)
             if not (skill.name == "system" and intent.action in _META):

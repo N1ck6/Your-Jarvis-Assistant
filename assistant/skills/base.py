@@ -55,6 +55,8 @@ class Reply:
     # A clarifying question in `speech` ("Закрыть Chrome или Яндекс Браузер?"): the next phrase goes here first;
     # the handler returns None if the phrase is not an answer (it is then handled as a new request).
     ask: Callable[[str], Awaitable["Reply | None"]] | None = None
+    # Something failed: `speech` says what in a few words; an error cue plays and the tray shows it too.
+    error: bool = False
 
 
 @dataclass

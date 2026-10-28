@@ -203,3 +203,65 @@ def test_listener_marks_barge_in_and_hot_source():
     for _ in range(40):
         core.process(quiet)
     assert utts[-1].source == "hot"
+
+
+# ---------------------------------------------------------------- never a silent stop
+class Broken(Skill):
+    name = "broken"
+    title = "Музыка"
+
+    def match(self, text):
+        return Intent(self.name, "go", text=text) if text.startswith("сломайся") else None
+
+    async def handle(self, intent):
+        raise FileNotFoundError(2, "No such file", r"C:\Users\me\Music\song.mp3")
+
+
+def test_a_failing_skill_says_why_in_plain_words(env):
+    app, media, apps = env
+    broken = Broken()
+    broken.setup(app)
+    app.skills.insert(0, broken)
+    app.brain.skills = app.skills
+    reply = run(app.brain.handle("сломайся"))
+    assert reply.error and reply.speech == "Не получилось — Музыка: не нашёл файл «song.mp3»."
+    assert "Traceback" not in reply.speech and "Errno" not in reply.speech
+
+
+def test_errors_in_plain_words():
+    import asyncio
+
+    import httpx
+
+    from assistant.errors import explain
+
+    assert explain(asyncio.TimeoutError()) == "ответ не пришёл вовремя"
+    assert explain(httpx.ConnectError("boom")) == "нет связи с интернетом или нужной программой"
+    assert explain(PermissionError()) == "нет доступа к файлу или папке"
+    try:
+        try:
+            raise ConnectionRefusedError()
+        except ConnectionRefusedError as inner:
+            raise RuntimeError("wrapped") from inner
+    except RuntimeError as exc:
+        assert explain(exc) == "нет связи с интернетом или нужной программой"   # the cause counts
+    assert explain(ValueError("x")) == "внутренняя ошибка"
+
+
+def test_hot_window_request_is_not_taken_for_small_talk(env):
+    """"поставь что-нибудь спокойное" right after an answer: the router doubted it, Jarvis still answers."""
+    app, media, apps = env
+    app.llm.local.answers = [json.dumps({"kind": "ignore"}), "Сейчас подберу."]
+    reply = run(app.brain.handle("поставь что-нибудь спокойное", addressed=False))
+    assert not reply.spoken and reply.stream is not None
+
+
+def test_music_player_reports_changes_and_unplayable_files(tmp_path):
+    from assistant.audio.music import MusicPlayer
+
+    player = MusicPlayer()
+    seen = []
+    player.listeners.append(lambda: seen.append(player.state))
+    bad = tmp_path / "bad.mp3"
+    bad.write_bytes(b"not audio")
+    assert player.play([bad]) is False and player.state == "stopped" and seen == ["stopped"]

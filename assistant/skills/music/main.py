@@ -51,24 +51,28 @@ class MusicSkill(Skill):
     def _folder(self) -> Path:
         return self.app.cfg.resolve(self.app.cfg.music.dir)
 
-    def tracks(self) -> dict[str, Path]:
+    def tracks(self, rescan: bool = False) -> dict[str, Path]:
+        """rescan: read the folder again (new songs in a playlist subfolder do not change the main folder's date)."""
         folder = self._folder()
         try:
             stamp = folder.stat().st_mtime
         except OSError:
             return {}
-        if stamp != self._stamp:
+        if stamp != self._stamp or rescan:
             self._tracks = {normalize_command(p.stem): p for p in sorted(folder.rglob("*"))
                             if p.suffix.lower() in AUDIO_EXT}
             self._stamp = stamp
         return self._tracks
 
     def find(self, name: str) -> Path | None:
-        tracks = self.tracks()
-        if not tracks or not name:
+        if not name:
             return None
-        hit = process.extractOne(normalize_command(name), tracks.keys(), scorer=fuzz.WRatio, score_cutoff=80)
-        return tracks[hit[0]] if hit else None
+        for rescan in (False, True):  # not found: maybe the song was added since the last look
+            tracks = self.tracks(rescan)
+            hit = process.extractOne(normalize_command(name), tracks.keys(), scorer=fuzz.WRatio, score_cutoff=80)
+            if hit:
+                return tracks[hit[0]]
+        return None
 
     def playlists(self) -> dict[str, Path]:
         folder = self._folder()
@@ -154,7 +158,8 @@ class MusicSkill(Skill):
             if not order:
                 return Reply(f"В папке {folder.name} нет треков.")
             random.shuffle(order)
-            player.play(order)
+            if not player.play(order):
+                return Reply(f"Не получилось включить {folder.name}: файлы не читаются.", error=True)
             log.info("Плейлист %s: %d треков", folder.name, len(order))
 
             async def stop_list() -> Reply:
@@ -171,7 +176,8 @@ class MusicSkill(Skill):
                 return Reply(f"Не нашёл трек «{name}» в папке с музыкой.")
             order = [first, *[t for t in tracks if t != first]]
             title = first.stem
-        player.play(order)
+        if not player.play(order):
+            return Reply("Не получилось включить музыку: файлы не читаются.", error=True)
         log.info("Музыка: %s (%d в очереди)", title, len(order))
 
         async def stop_again() -> Reply:

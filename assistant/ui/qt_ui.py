@@ -1238,5 +1238,6 @@ class QtUi(QObject):
         self.tray.setIcon(state_icon(state))
         tip = f"Джарвис — {label}" + (f"\n{detail[:80]}" if detail else "")
         self.tray.setToolTip(tip)
-        self._status_action.setText(label)
+        # While working, the menu says on what: "Думаю: Музыка…" (the skill being run).
+        self._status_action.setText(f"{label}: {detail[:40]}" if state is State.THINKING and detail.endswith("…") else label)
         self._mute_action.setText("Включить микрофон" if state is State.MUTED else "Выключить микрофон")

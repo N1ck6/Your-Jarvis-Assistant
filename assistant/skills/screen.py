@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 
 from assistant.llm.providers import Msg
 from assistant.skills.base import Intent, Reply, Skill
@@ -35,6 +36,9 @@ PROMPT = """Пользователь сам выделил эту область
 
 
 class ScreenSkill(Skill):
+    # The last region and when it was taken: "реши эту задачу" right after "что на экране" solves that region.
+    last_region: tuple[float, bytes] | None = None
+
     async def _ocr(self, png: bytes) -> Reply:
         """Text from the selected region into the clipboard (a screenshot, a video, a locked PDF)."""
         from assistant import winutil
@@ -72,6 +76,7 @@ class ScreenSkill(Skill):
         if not png:
             return Reply(listen_after=False)
         log.info("Область экрана: %d КБ", len(png) // 1024)
+        self.last_region = (time.monotonic(), png)
         if intent.action == "ocr":
             return await self._ocr(png)
         question = intent.raw or intent.text or "помоги с этим"

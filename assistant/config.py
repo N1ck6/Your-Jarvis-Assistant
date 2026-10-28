@@ -93,6 +93,7 @@ class LocalLlmCfg(BaseModel):
 class LlmCfg(BaseModel):
     info_chain: list[str] = Field(default_factory=lambda: ["groq", "gemini", "local"])
     vision_chain: list[str] = Field(default_factory=lambda: ["gemini", "local"])
+    solve_chain: list[str] = Field(default_factory=lambda: ["gemini", "groq", "local"])
     local_chain: list[str] = Field(default_factory=lambda: ["local"])
     cooldown_sec: float = 900
     request_timeout_sec: float = 25

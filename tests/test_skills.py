@@ -358,6 +358,13 @@ def test_weather_followup_ignores_other_phrases(app):
     ("выключи компьютер через час", "power", "off"), ("перезагрузи компьютер", "power", "reboot"),
     ("отмени выключение", "power", "cancel"),
     ("скопируй текст с экрана", "screen", "ocr"), ("распознай текст на экране", "screen", "ocr"),
+    ("реши задачу с экрана", "solve", "screen"), ("решите пример с картинки", "solve", "screen"),
+    ("ответь на вопрос на экране", "solve", "screen"), ("реши выделенную задачу", "solve", "selection"),
+    ("реши эту задачу", "solve", "auto"), ("реши эту задачу, пожалуйста", "solve", "auto"), ("а реши её", "solve", "auto"),
+    ("реши", "solve", "auto"), ("помоги решить задачу", "solve", "auto"), ("сделай это задание", "solve", "auto"),
+    ("реши задачу: два поезда вышли навстречу друг другу", "solve", "said"),
+    ("реши уравнение x в квадрате минус 4 равно 0", "solve", "said"),
+    ("реши 2 плюс 2", "calc", "calc"),
     ("новости", "news", "news"), ("что нового в Москве", "news", "news"), ("новости технологий", "news", "news"),
     ("запомни мой голос", "voiceprint", "enroll"), ("забудь мой голос", "voiceprint", "forget"),
     ("ты узнаешь мой голос", "voiceprint", "check"),
@@ -396,3 +403,65 @@ def test_mood_playlists(app, tmp_path):
         assert music.playlist("телеграм") is None
     finally:
         app.cfg.music.dir = old
+
+
+SOLVED = r"""**Решение:**
+1. Скорость сближения: $60 + 80 = 140$ км/ч.
+2. Время: $t = \frac{420}{140} = 3$ ч.
+* Значит, встретятся через 3 часа.
+
+**Ответ:** $\boxed{3}$ часа."""
+
+
+def test_solution_is_plain_text():
+    from assistant.skills.solve import split_solution
+
+    solution, answer = split_solution(SOLVED)
+    assert solution == "1. Скорость сближения: 60 + 80 = 140 км/ч.\n2. Время: t = 420/140 = 3 ч.\nЗначит, встретятся через 3 часа."
+    assert answer == "3 часа"
+    for text in (solution, answer):
+        assert not any(ch in text for ch in "*#`$\\")
+
+
+@pytest.mark.parametrize("raw,answer", [
+    ("РЕШЕНИЕ:\nD = 25 - 24 = 1\nОТВЕТ:\n(2; 3)", "(2; 3)"),      # a point keeps its brackets
+    ("Решение: x^2 = 4\nОтвет: [x = ±2].", "x = ±2"),
+    ("РЕШЕНИЕ:\nВерный вариант Б\nОТВЕТ: «Б) Париж»", "Б) Париж"),
+    ("x = 7 - 2\n5", "5"),                                         # no headers: the last line is the answer
+])
+def test_answer_is_bare(raw, answer):
+    from assistant.skills.solve import split_solution
+
+    assert split_solution(raw)[1] == answer
+
+
+def test_spoken_answer():
+    from assistant.skills.solve import spoken
+
+    assert spoken("x² = 4; x = ±2") == "x в квадрате = 4, x = плюс минус 2"
+
+
+def test_solve_shows_solution_and_answer_apart(app, monkeypatch):
+    """"что на экране" then "реши эту задачу": the same region goes to the cloud, two pinned windows come back."""
+    solve = next(s for s in app.skills if s.name == "solve")
+    screen = next(s for s in app.skills if s.name == "screen")
+    decks, sent = [], []
+
+    async def complete(chain, messages, **kw):
+        sent.append((chain, messages))
+        return SOLVED
+
+    monkeypatch.setattr(app, "llm", type("Llm", (), {"complete": staticmethod(complete), "last_provider": "gemini"})(),
+                        raising=False)
+    monkeypatch.setattr(app.ui, "show_deck", decks.append)
+    monkeypatch.setattr(screen, "last_region", (__import__("time").monotonic(), b"png"))
+
+    async def run():
+        reply = await solve.handle(solve.match("реши эту задачу"))
+        return "".join([d async for d in reply.stream])
+
+    speech = asyncio.run(run())
+    assert sent[0][0] == app.cfg.llm.vision_chain and sent[0][1][0].images == [b"png"]
+    assert [d.title for d in decks] == ["Решение", "Ответ"] and all(d.pinned for d in decks)
+    assert decks[1].cards[0].screen == "3 часа"
+    assert speech == "Решаю. Ответ: 3 часа"

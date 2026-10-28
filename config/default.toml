@@ -82,6 +82,8 @@ ok_for_actions = true
 info_chain = ["groq", "gemini", "local"]
 # Screen help (images): Groq free tier has no vision models.
 vision_chain = ["gemini", "local"]
+# "реши задачу" given as text (said or selected); a task from the screen uses vision_chain.
+solve_chain = ["gemini", "groq", "local"]
 # Everything else (chat, commands, explanations).
 local_chain = ["local"]
 # After a 429 / quota error the provider is skipped for this long.
@@ -131,7 +133,7 @@ allow_cmd = true
 
 [skills]
 # Order matters: the first module whose phrase matches wins. User scenarios go first.
-enabled = ["scenarios", "calc", "visual", "system", "power", "web", "media", "music", "dictation", "selection", "screen", "notes", "windows",
+enabled = ["scenarios", "solve", "calc", "visual", "system", "power", "web", "media", "music", "dictation", "selection", "screen", "notes", "windows",
            "search", "timers", "focus", "voiceprint", "memory", "briefing", "news", "agenda", "pc", "explain", "voice", "weather", "apps"]
 
 [apps]

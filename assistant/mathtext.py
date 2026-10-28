@@ -39,7 +39,7 @@ _COMMANDS = {
     "Delta": (" дельта ", "Δ"), "prime": (" штрих ", "′"),
 }
 _DROP = re.compile(r"\\(?:left|right|big|Big|bigg|Bigg|displaystyle|limits|nolimits|,|;|:|!|quad|qquad)(?![A-Za-z])|\\ ")
-_WRAP = re.compile(r"\\(?:text|mathrm|mathbf|mathit|mathbb|mathcal|operatorname|textbf|boldsymbol|vec|overline|hat)"
+_WRAP = re.compile(r"\\(?:boxed|text|mathrm|mathbf|mathit|mathbb|mathcal|operatorname|textbf|boldsymbol|vec|overline|hat)"
                    r"\s*\{([^{}]*)\}")
 # Latin letters as Russian maths reads them.
 _LETTERS = {"a": "а", "b": "бэ", "c": "цэ", "d": "дэ", "e": "е", "f": "эф", "g": "жэ", "h": "аш", "i": "и", "j": "йот",

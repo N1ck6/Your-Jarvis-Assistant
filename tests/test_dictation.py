@@ -19,7 +19,7 @@ class FakeListener:
         self.started = 0
         self.hands_free = None
 
-    def start_dictation(self, until_pause, pause_sec=3.0):
+    def start_dictation(self, until_pause, pause_sec=10.0):
         self.dictating, self.started = True, self.started + 1
 
     def stop_dictation(self):
@@ -125,7 +125,7 @@ def test_tap_goes_hands_free_and_second_tap_stops():
         app.dictation_key_down(lambda t: None)
         await asyncio.sleep(earcons.DICTATE.seconds + 0.1)
         app.dictation_key_up(0.2)
-        assert app._dictating and app.listener.hands_free == 30.0
+        assert app._dictating and app.listener.hands_free == app.cfg.audio.dictation_hands_free_sec == 40.0
         app.dictation_key_down(lambda t: None)       # second tap
         app.dictation_key_up(0.1)
         await drain(app)

@@ -93,9 +93,6 @@ class LocalLlmCfg(BaseModel):
 class LlmCfg(BaseModel):
     info_chain: list[str] = Field(default_factory=lambda: ["groq", "gemini", "local"])
     vision_chain: list[str] = Field(default_factory=lambda: ["gemini", "local"])
-    solve_chain: list[str] = Field(default_factory=lambda: ["gemini", "groq"])
-    solve_local_fallback: bool = False
-    solve_models: list[str] = Field(default_factory=lambda: ["gemini-flash-lite-latest", "gemini-flash-latest"])
     local_chain: list[str] = Field(default_factory=lambda: ["local"])
     cooldown_sec: float = 900
     request_timeout_sec: float = 25
@@ -126,7 +123,8 @@ class FilesCfg(BaseModel):
 
 
 class SkillsCfg(BaseModel):
-    enabled: list[str] = Field(default_factory=list)
+    enabled: list[str] = Field(default_factory=list)   # built-in skills in matching order
+    disabled: list[str] = Field(default_factory=list)  # skill folders found but not loaded (data/skills/<id>/ too)
 
 
 class AppsCfg(BaseModel):
@@ -160,13 +158,6 @@ class NewsCfg(BaseModel):
     feeds: dict[str, str] = Field(default_factory=dict)   # city / "главное" -> RSS url (default: Google News)
     cache_min: int = 10
     spoken: int = 2
-
-
-class FocusCfg(BaseModel):
-    work_min: int = 25
-    break_min: int = 5
-    long_break_min: int = 15
-    rounds: int = 4
 
 
 class SearchCfg(BaseModel):
@@ -229,7 +220,6 @@ class Settings(BaseModel):
     calendar: CalendarCfg = Field(default_factory=CalendarCfg)
     briefing: BriefingCfg = Field(default_factory=BriefingCfg)
     news: NewsCfg = Field(default_factory=NewsCfg)
-    focus: FocusCfg = Field(default_factory=FocusCfg)
     search: SearchCfg = Field(default_factory=SearchCfg)
     web: WebCfg = Field(default_factory=WebCfg)
     ui: UiCfg = Field(default_factory=UiCfg)

@@ -131,7 +131,7 @@ class Assistant:
         self.player = Player(cfg.audio.output_device, cfg.tts.volume)
         self.music = MusicPlayer(cfg.music.volume, cfg.music.duck_volume)
         self.speaker = Speaker(self.tts, self.player, on_start=self._on_speech_start, on_end=self._on_speech_end)
-        self.skills = load_skills(cfg.skills.enabled)
+        self.skills = load_skills(cfg.skills.enabled, cfg.skills.disabled)
         for skill in self.skills:
             skill.setup(self)
         self.brain = Brain(self, self.skills)
@@ -377,10 +377,13 @@ class Assistant:
 
     def apply_settings(self, changes: dict) -> list[str]:
         """Saves changes, updates the live settings; returns the keys that need a restart."""
+        from assistant import skillpack
         from assistant.config import save_override, update_in_place, validate_changes
         from assistant.settings_schema import RESTART_KEYS
 
+        ours, changes = skillpack.split_changes(changes)  # settings of folder skills ("focus.work_min")
         new = validate_changes(changes)  # raises on bad values, nothing is saved then
+        restart = skillpack.save_changes(ours)
         old_models = {self.cfg.llm.local.model, self.cfg.llm.local.vision_model, self.cfg.router.model}
         for key, value in changes.items():
             save_override(key, value)
@@ -411,8 +414,8 @@ class Assistant:
         for skill in self.skills:
             if hasattr(skill, "_stamp"):
                 skill._stamp = -1  # re-scan folders (music) on next use
-        log.info("Настройки изменены: %s", ", ".join(changes))
-        return [k for k in changes if k in RESTART_KEYS]
+        log.info("Настройки изменены: %s", ", ".join([*changes, *(c[1] for c in ours)]))
+        return restart + [k for k in changes if k in RESTART_KEYS]
 
     def _switch_voice(self, voice_id: str) -> None:
         try:

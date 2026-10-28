@@ -1,0 +1,41 @@
+[skill]
+id = "focus"
+name = "Помодоро"
+version = "1.0.0"
+author = "Jarvis"
+description = "Циклы работы и перерыва с голосовыми переходами: «помодоро», «помодоро на 50 минут», «стоп помодоро»."
+api = 1
+entry = "main:create"
+permissions = []
+
+# Defaults; the user's values are kept in data/settings.json under "focus".
+[config]
+work_min = 25
+break_min = 5
+long_break_min = 15
+rounds = 4
+
+# Fields on the settings page (Модули). key = a name from [config].
+[[settings]]
+key = "work_min"
+label = "Помодоро: работа, мин"
+type = "number"
+min = 5
+max = 120
+step = 5
+
+[[settings]]
+key = "break_min"
+label = "Помодоро: перерыв, мин"
+type = "number"
+min = 1
+max = 30
+step = 1
+
+[[settings]]
+key = "rounds"
+label = "Помодоро: раундов"
+type = "number"
+min = 1
+max = 8
+step = 1

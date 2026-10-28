@@ -145,8 +145,6 @@ CASES = [
     ("какие у меня таймеры", "timers", "list"), ("покажи таймеры", "timers", "list"), ("таймеры", "timers", "list"),
     ("сколько осталось", "timers", "list"), ("когда сработает таймер", "timers", "list"), ("мои напоминания", "timers", "list"),
     # --- pomodoro
-    ("помодоро", "focus", "start"), ("запусти помодоро на 50 минут", "focus", "start"),
-    ("останови помодоро", "focus", "stop"), ("сколько до перерыва", "focus", "status"),
     # --- memory
     ("запомни, что я не ем мясо", "memory", "remember"), ("учти что у меня аллергия на орехи", "memory", "remember"),
     ("что ты обо мне знаешь", "memory", "recall"), ("что ты запомнил", "memory", "recall"),
@@ -162,10 +160,6 @@ CASES = [
     ("включи дискорд", "apps", "open"), ("можешь открыть ютуб", "apps", "open"), ("зайди на habr.com", "apps", "open"),
     ("хочу поиграть в geometry dash", "apps", "open"),
     # --- weather
-    ("какая погода", "weather", "forecast"), ("погода в Казани завтра", "weather", "forecast"),
-    ("будет ли дождь", "weather", "forecast"), ("нужен ли зонт", "weather", "forecast"),
-    ("что на улице", "weather", "forecast"), ("как одеться сегодня", "weather", "forecast"),
-    ("сколько градусов", "weather", "forecast"),
     # --- explain window
     ("объясни подробно что такое DNS", "explain", "explain"), ("расскажи наглядно про чёрные дыры", "explain", "explain"),
     ("объясни что такое блокчейн по полочкам", "explain", "explain"), ("сделай презентацию про квантовые компьютеры", "explain", "explain"),
@@ -358,17 +352,6 @@ def test_weather_followup_ignores_other_phrases(app):
     ("выключи компьютер через час", "power", "off"), ("перезагрузи компьютер", "power", "reboot"),
     ("отмени выключение", "power", "cancel"),
     ("скопируй текст с экрана", "screen", "ocr"), ("распознай текст на экране", "screen", "ocr"),
-    ("реши задачу с экрана", "solve", "screen"), ("решите пример с картинки", "solve", "screen"),
-    ("ответь на вопрос на экране", "solve", "screen"), ("реши выделенную задачу", "solve", "selection"),
-    ("реши эту задачу", "solve", "auto"), ("реши эту задачу, пожалуйста", "solve", "auto"), ("а реши её", "solve", "auto"),
-    ("реши", "solve", "auto"), ("помоги решить задачу", "solve", "auto"), ("сделай это задание", "solve", "auto"),
-    ("реши задачу: два поезда вышли навстречу друг другу", "solve", "said"),
-    ("реши уравнение x в квадрате минус 4 равно 0", "solve", "said"),
-    ("реши 2 плюс 2", "calc", "calc"),
-    ("икс из выражения x в квадрате минус 5 икс плюс 6 равно ноль", "solve", "said"),
-    ("найди икс из уравнения 2x плюс 3 равно 7", "solve", "said"), ("найди икс", "solve", "auto"),
-    ("чему равен икс", "solve", "auto"), ("найди корни уравнения на экране", "solve", "screen"),
-    ("вычисли производную x в кубе плюс 2x", "solve", "said"), ("посчитай 5 умножить на 3", "calc", "calc"),
     ("новости", "news", "news"), ("что нового в Москве", "news", "news"), ("новости технологий", "news", "news"),
     ("запомни мой голос", "voiceprint", "enroll"), ("забудь мой голос", "voiceprint", "forget"),
     ("ты узнаешь мой голос", "voiceprint", "check"),
@@ -418,7 +401,7 @@ SOLVED = r"""**Решение:**
 
 
 def test_solution_is_plain_text():
-    from assistant.skills.solve import split_solution
+    from assistant.skills.solve.main import split_solution
 
     solution, answer = split_solution(SOLVED)
     assert solution == "1. Скорость сближения: 60 + 80 = 140 км/ч.\n2. Время: t = 420/140 = 3 ч.\nЗначит, встретятся через 3 часа."
@@ -434,13 +417,13 @@ def test_solution_is_plain_text():
     ("x = 7 - 2\n5", "5"),                                         # no headers: the last line is the answer
 ])
 def test_answer_is_bare(raw, answer):
-    from assistant.skills.solve import split_solution
+    from assistant.skills.solve.main import split_solution
 
     assert split_solution(raw)[1] == answer
 
 
 def test_spoken_answer():
-    from assistant.skills.solve import spoken
+    from assistant.skills.solve.main import spoken
 
     assert spoken("x² = 4; x = ±2") == "x в квадрате = 4, x = плюс минус 2"
 
@@ -448,7 +431,6 @@ def test_spoken_answer():
 def test_solve_shows_solution_and_answer_apart(app, monkeypatch):
     """"что на экране" then "реши эту задачу": the same region goes to the cloud, two pinned windows come back."""
     solve = next(s for s in app.skills if s.name == "solve")
-    screen = next(s for s in app.skills if s.name == "screen")
     decks, sent = [], []
 
     async def complete(chain, messages, **kw):
@@ -458,7 +440,7 @@ def test_solve_shows_solution_and_answer_apart(app, monkeypatch):
     monkeypatch.setattr(app, "llm", type("Llm", (), {"complete": staticmethod(complete), "last_provider": "gemini"})(),
                         raising=False)
     monkeypatch.setattr(app.ui, "show_deck", decks.append)
-    monkeypatch.setattr(screen, "last_region", (__import__("time").monotonic(), b"png"))
+    solve.ctx.share("screen.region", b"png")   # what "что на экране" leaves behind
 
     async def run():
         reply = await solve.handle(solve.match("реши эту задачу"))
@@ -472,7 +454,7 @@ def test_solve_shows_solution_and_answer_apart(app, monkeypatch):
 
     # The local fallback, when allowed, is marked as possibly wrong.
     decks.clear()
-    monkeypatch.setattr(app.cfg.llm, "solve_local_fallback", True)
+    monkeypatch.setattr(solve.ctx.config, "local_fallback", True)
     monkeypatch.setattr(app.llm, "last_provider", "local")
     speech = asyncio.run(run())
     assert sent[1][0] == ["gemini", "local"]

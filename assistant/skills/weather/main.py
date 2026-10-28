@@ -73,14 +73,6 @@ def _range(lo: float, hi: float) -> str:
 
 
 class WeatherSkill(Skill):
-    name = "weather"
-    title = "Погода"
-    examples = [
-        'какая погода',
-        'погода в <город>',
-        'погода завтра в <город>',
-    ]
-
     def __init__(self) -> None:
         self._geo_cache: dict[str, tuple[float, float, str]] = {}
 
@@ -201,7 +193,7 @@ class WeatherSkill(Skill):
             return Reply("Сервис погоды сейчас не отвечает.", fallthrough=True)
 
     async def handle(self, intent: Intent) -> Reply:
-        city = str(intent.slots.get("city") or "").strip() or self.app.cfg.assistant.default_city
+        city = str(intent.slots.get("city") or "").strip() or self.ctx.settings.assistant.default_city
         if intent.action == "ask":
             got = await self._fetch(city, 8)
             if isinstance(got, Reply):
@@ -307,9 +299,8 @@ class WeatherSkill(Skill):
         system = (f"Ты отвечаешь на вопрос о погоде {in_place(place)} строго по прогнозу ниже. 1–2 коротких предложения "
                   f"по-русски, без markdown, списков и вступлений. Дни называй словами (сегодня, завтра, в субботу). "
                   f"Если в прогнозе нет ответа — так и скажи.\nСейчас {now:%d.%m %H:%M}.\nПрогноз:\n" + "\n".join(rows))
-        chain = ["local", *[p for p in self.app.cfg.llm.info_chain if p != "local"]]
-        return Reply(stream=self.app.llm.stream(chain, [Msg("system", system), Msg("user", question)], web=False,
-                                                max_tokens=200))
+        chain = ["local", *[p for p in self.ctx.settings.llm.info_chain if p != "local"]]
+        return Reply(stream=self.ctx.stream([Msg("system", system), Msg("user", question)], chain=chain, max_tokens=200))
 
 
 _DAYS_ACC = ["в понедельник", "во вторник", "в среду", "в четверг", "в пятницу", "в субботу", "в воскресенье"]

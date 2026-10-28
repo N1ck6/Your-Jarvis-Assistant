@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ValidationError
 
+from assistant import skillpack
 from assistant.config import Settings, model_value_map, save_override, set_env_key, update_in_place, validate_changes
 from assistant.settings_schema import RESTART_KEYS, schema
 from assistant.tts.catalog import VOICES, get_voice
@@ -44,12 +45,14 @@ class Host:
         self.can_restart = False
 
     def apply_settings(self, changes: dict[str, Any]) -> list[str]:
+        ours, changes = skillpack.split_changes(changes)
         new = validate_changes(changes)
+        restart = skillpack.save_changes(ours)
         for key, value in changes.items():
             save_override(key, value)
         update_in_place(self.cfg, new)
         self.tts.rate = self.cfg.tts.rate
-        return [k for k in changes if k in RESTART_KEYS]
+        return restart + [k for k in changes if k in RESTART_KEYS]
 
     def restart(self) -> None:
         raise HTTPException(400, "Перезапуск доступен, когда страница открыта из работающего Джарвиса")
@@ -235,7 +238,8 @@ def create_app(host: Host) -> FastAPI:
     @app.get("/api/settings")
     def get_settings() -> dict:
         voice_options = [[v.id, v.title] for v in VOICES]
-        return {"sections": schema(voice_options), "values": model_value_map(cfg), "can_restart": host.can_restart}
+        values = {**model_value_map(cfg), **skillpack.settings_values(skillpack.discover())}
+        return {"sections": schema(voice_options), "values": values, "can_restart": host.can_restart}
 
     @app.post("/api/settings")
     def post_settings(req: ChangesRequest) -> dict:
@@ -244,6 +248,8 @@ def create_app(host: Host) -> FastAPI:
         except ValidationError as exc:
             msg = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()[:3])
             raise HTTPException(400, f"Неверное значение — {msg}") from exc
+        except ValueError as exc:  # a setting of a folder skill
+            raise HTTPException(400, f"Неверное значение — {exc}") from exc
         return {"ok": True, "restart": restart}
 
     @app.post("/api/pick-folder")

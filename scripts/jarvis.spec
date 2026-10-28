@@ -9,7 +9,8 @@ ROOT = Path(SPECPATH).parent
 hidden = (collect_submodules("assistant") + collect_submodules("onnx_asr") + collect_submodules("pymorphy3")
           + ["pymorphy3_dicts_ru", "win32timezone", "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
              "uvicorn.lifespan.on"])
-datas = (collect_data_files("assistant", includes=["voicelab/static/*", "ui/icon.svg"])
+datas = (collect_data_files("assistant", includes=["voicelab/static/*", "ui/icon.svg", "skills/*/*.toml",
+                                                   "skills/*/prompts/*", "skills/*/tests/*.toml"])
          + collect_data_files("pymorphy3_dicts_ru") + collect_data_files("onnx_asr") + collect_data_files("vosk")
          + collect_data_files("num2words"))
 

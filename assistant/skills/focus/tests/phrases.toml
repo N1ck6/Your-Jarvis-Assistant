@@ -1,0 +1,6 @@
+phrase = [
+    { text = "помодоро", action = "start" },
+    { text = "запусти помодоро на 50 минут", action = "start" },
+    { text = "останови помодоро", action = "stop" },
+    { text = "сколько до перерыва", action = "status" },
+]

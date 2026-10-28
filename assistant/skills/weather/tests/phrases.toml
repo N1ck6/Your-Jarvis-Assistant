@@ -1,0 +1,10 @@
+# What each phrase must trigger with all skills loaded in their real order (tests/test_skillpack.py).
+phrase = [
+    { text = "какая погода", action = "forecast" },
+    { text = "погода в Казани завтра", action = "forecast" },
+    { text = "будет ли дождь", action = "forecast" },
+    { text = "нужен ли зонт", action = "forecast" },
+    { text = "что на улице", action = "forecast" },
+    { text = "как одеться сегодня", action = "forecast" },
+    { text = "сколько градусов", action = "forecast" },
+]

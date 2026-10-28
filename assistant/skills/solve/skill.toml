@@ -1,0 +1,30 @@
+[skill]
+id = "solve"
+name = "Решение задач"
+version = "1.0.0"
+author = "Jarvis"
+description = "Решает задачу с экрана, из выделенного текста или сказанную голосом: краткое решение и ответ в двух окнах."
+api = 1
+entry = "main:create"
+# Before the calculator: "реши задачу" is ours, "реши 2 плюс 2" the skill passes on to it.
+before = ["calc"]
+requires = ["screen"]   # "реши эту задачу" after "что на экране" solves that region
+permissions = ["screen", "clipboard", "cloud_llm"]
+
+[config]
+# The cloud only: the local model often makes up a wrong answer.
+chain = ["gemini", "groq"]
+# A task from the screen: models with vision (Groq's free tier has none).
+image_chain = ["gemini"]
+# The local model when the cloud is down; its answer is marked as possibly wrong.
+local_fallback = false
+# Lite solves school tasks and photos in 1–2 s; the full Flash is the fallback (on the free tier it often hangs or 503s).
+gemini_models = ["gemini-flash-lite-latest", "gemini-flash-latest"]
+# "реши эту задачу": the region selected this long ago is still "эта".
+region_ttl_sec = 300
+
+[[settings]]
+key = "local_fallback"
+label = "«Реши задачу»: локальная модель, если облако недоступно"
+type = "bool"
+hint = "она может ошибиться в ответе — такой ответ помечается"

@@ -5,19 +5,17 @@ pinned windows: a short solution and the answer alone. Both are plain text: no m
 
 "реши задачу с экрана" asks for a region; "реши эту задачу" right after "что на экране" reuses that region;
 "реши выделенное" takes the selection; "реши задачу: два поезда вышли..." solves what was said.
+Settings: [config] of skill.toml; the prompt: prompts/solve.md; checked phrases: tests/phrases.toml.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
-import time
 
-from assistant import mathtext, winutil
-from assistant.core import Card, Deck
+from assistant import mathtext
 from assistant.llm.hub import FAIL_TEXT
 from assistant.llm.providers import Msg
-from assistant.skills.base import Intent, Reply, Skill, run_blocking
+from assistant.skills.base import Intent, Reply, Skill
 
 log = logging.getLogger("solve")
 
@@ -41,20 +39,6 @@ _POINTER = re.compile(rf"\b(?:{_THIS}|{_TASK})\b")
 # Words that point at the task without stating it: "реши эту задачу за меня пожалуйста".
 _FILLER = re.compile(rf"\b(?:{_THIS}|{_TASK}|{_UNKNOWN}|выражени\w*|услови\w*|с|со|на|в|из|по|и|у|меня|тут|здесь|там|пожалуйста|быстро|скорее|"
                      r"плиз|сейчас|которая|который|которое|написан\w*|есть|подробно|кратко|коротко)\b")
-REGION_TTL_SEC = 300  # "реши эту задачу" after "что на экране": the region shown that long ago is still "эта"
-
-PROMPT = """Реши задачу{where}. Ответ дай строго в двух частях с такими заголовками:
-РЕШЕНИЕ:
-краткое решение: 2–6 коротких строк, только ключевые шаги и вычисления, без вступлений и пересказа условия.
-ОТВЕТ:
-только итоговый ответ одной строкой: число с единицами, вариант ответа, слово или короткая фраза.
-Пиши по-русски обычным текстом. Никакого markdown: без звёздочек, решёток, обратных кавычек и списков.
-Никакого LaTeX: без знаков $, обратной косой черты и \\boxed. Формулы пиши в строку символами: x², √2, π, ≤, ≥, ·, /.
-Ответ не заключай в скобки и кавычки. Если вопросов или пунктов несколько — ответы через точку с запятой.
-Если в задаче варианты ответа — назови верный вариант и его текст.
-Уравнение, неравенство или выражение без вопроса — тоже задача: реши уравнение, найди значение, упрости.
-Только если там совсем нет ни задачи, ни вопроса, ни выражения — напиши: НЕТ ЗАДАЧИ."""
-
 _HEAD = re.compile(r"^\W*(решение|ответ|answer|solution)\W*?:?\s*", re.I)
 _MD_LINE = re.compile(r"^\s*(?:#{1,6}\s*|>\s*|[-*•+]\s+|```\w*\s*$)")
 _EMPH = re.compile(r"(\*\*|__|~~|`)")
@@ -64,16 +48,6 @@ _WRAPPERS = [("(", ")"), ("[", "]"), ("{", "}"), ("«", "»"), ('"', '"'), ("'",
 
 
 class SolveSkill(Skill):
-    name = "solve"
-    title = "Решение задач"
-    examples = [
-        'реши задачу с экрана',
-        'реши выделенную задачу',
-        'реши эту задачу',
-        'реши задачу <условие задачи>',
-        'найди икс <уравнение>',
-    ]
-
     def match(self, text: str) -> Intent | None:
         m = _SOLVE.match(text)
         if not m:
@@ -98,68 +72,46 @@ class SolveSkill(Skill):
         if source == "said":
             task = intent.raw or intent.text
         if source == "auto":
-            recent = self._recent_region()
+            recent = self.ctx.recent("screen.region", self.ctx.config.region_ttl_sec)
             if recent is not None:
                 images = [recent]
             else:
                 source = "selection_or_screen"
         if source in ("selection", "selection_or_screen"):
-            task = ((await run_blocking(winutil.copy_selection)) or "").strip()[:6000]
+            task = (await self.ctx.selection())[:6000]
             if not task and source == "selection":
                 return Reply("Сначала выделите задачу, а потом скажите «реши».")
         if not task and not images:
-            png = await self._select_region()
+            png = await self.ctx.select_region()
             if not png:
                 return Reply(listen_after=False)
             images = [png]
-        where = " с изображения" if images else ""
         log.info("Задача: %s", "картинка" if images else f"текст, {len(task)} символов")
-        return Reply(stream=self._solve(task, images, where))
+        return Reply(stream=self._solve(task, images))
 
-    def _recent_region(self) -> bytes | None:
-        screen = next((s for s in self.app.skills if s.name == "screen"), None)
-        last = getattr(screen, "last_region", None)
-        if last and time.monotonic() - last[0] < REGION_TTL_SEC:
-            return last[1]
-        return None
-
-    async def _select_region(self) -> bytes | None:
-        fut = self.app.ui.select_region()
-        try:
-            png = await asyncio.wait_for(asyncio.wrap_future(fut), timeout=90)
-        except asyncio.TimeoutError:
-            return None
-        if png:
-            screen = next((s for s in self.app.skills if s.name == "screen"), None)
-            if screen is not None:
-                screen.last_region = (time.monotonic(), png)  # type: ignore[attr-defined]
-        return png
-
-    async def _solve(self, task: str, images: list[bytes], where: str):
+    async def _solve(self, task: str, images: list[bytes]):
         yield "Решаю. "
-        cfg = self.app.cfg.llm
-        content = PROMPT.format(where=where) + (f"\n\nЗадача:\n{task}" if task else "")
-        messages = [Msg("user", content, images=images)]
-        # The cloud only: the local model often makes up a wrong answer. Groq's free tier has no vision.
-        chain = [p for p in (cfg.vision_chain if images else cfg.solve_chain) if p != "local" and not (images and p == "groq")]
-        if cfg.solve_local_fallback:
+        cfg = self.ctx.config
+        prompt = self.ctx.prompt("solve").replace("{where}", " с изображения" if images else "")
+        messages = [Msg("user", prompt + (f"\n\nЗадача:\n{task}" if task else ""), images=images)]
+        chain = [p for p in (cfg.image_chain if images else cfg.chain) if p != "local"]
+        if cfg.local_fallback:
             chain.append("local")
-        raw = await self.app.llm.complete(chain, messages, web=False, max_tokens=3000, models={"gemini": cfg.solve_models})
+        raw = await self.ctx.ask(messages, chain=chain, max_tokens=3000, models={"gemini": cfg.gemini_models})
         if not raw or raw == FAIL_TEXT:
-            yield ("Не получилось решить: ни облако, ни локальная модель не ответили." if cfg.solve_local_fallback else
+            yield ("Не получилось решить: ни облако, ни локальная модель не ответили." if cfg.local_fallback else
                    "Не получилось решить: облако сейчас не отвечает, а локальной модели такие задачи я не доверяю.")
             return
-        local = self.app.llm.last_provider == "local"
+        local = self.ctx.last_provider == "local"
         if "НЕТ ЗАДАЧИ" in raw.upper() and len(raw) < 40:
             yield "Задачи здесь не вижу."
             return
         solution, answer = split_solution(raw)
-        log.info("Решено (%s): ответ %d символов", self.app.llm.last_provider, len(answer))
+        log.info("Решено (%s): ответ %d символов", self.ctx.last_provider, len(answer))
         if solution:
-            self.app.ui.show_deck(Deck(title="Решение", cards=[Card("", solution, "")], done=True, pinned=True))
+            self.ctx.card("Решение", solution)
         if answer:
-            title = "Ответ · локально, может быть неточно" if local else "Ответ"
-            self.app.ui.show_deck(Deck(title=title, cards=[Card("", answer, "")], done=True, pinned=True))
+            self.ctx.card("Ответ · локально, может быть неточно" if local else "Ответ", answer)
         caution = "Облако недоступно, решил локально — лучше проверьте. " if local else ""
         if answer and len(answer) <= 120:
             yield caution + "Ответ: " + spoken(answer)

@@ -17,7 +17,7 @@ from assistant.assistant import split_notes  # noqa: E402
 from assistant.core import Card, Deck  # noqa: E402
 from assistant.nlu import normalize_command  # noqa: E402
 from assistant.skills.timers import TimersSkill  # noqa: E402
-from assistant.skills.weather import WeatherSkill  # noqa: E402
+from assistant.skills.weather.main import WeatherSkill  # noqa: E402
 from assistant.ui.qt_ui import PANELS, DeckWindow, VisualWindow, inline_md, render_screen  # noqa: E402
 
 

@@ -1,0 +1,3 @@
+# Phrases are recognized in main.py (city, day and part of the day are taken out of the phrase).
+# Examples: the canonical commands the router turns free phrases into ("<...>" = a value).
+examples = ["какая погода", "погода в <город>", "погода завтра в <город>"]

@@ -93,11 +93,6 @@ SECTIONS: list[tuple[str, list[F]]] = [
         F("briefing.auto_time", "Утренняя сводка автоматически в", "time", "пусто — только по просьбе", restart=True),
         F("briefing.news", "Новости города в сводке", "bool"),
         F("news.spoken", "Сколько заголовков читать вслух", "number", "остальные — на карточке", 1, 8, 1),
-        F("llm.solve_local_fallback", "«Реши задачу»: локальная модель, если облако недоступно", "bool",
-          "она может ошибиться в ответе — такой ответ помечается"),
-        F("focus.work_min", "Помодоро: работа, мин", "number", "", 5, 120, 5),
-        F("focus.break_min", "Помодоро: перерыв, мин", "number", "", 1, 30, 1),
-        F("focus.rounds", "Помодоро: раундов", "number", "", 1, 8, 1),
         F("explain.provider", "Кто готовит карточки объяснений", "select", "облако быстрее и точнее, но тратит ~2,5 тыс. токенов",
           options=[["local", "Локальная модель"], ["cloud", "Облако (Groq / Gemini), запасная — локальная"]]),
         F("explain.max_cards", "Карточек в объяснении, до", "number", "", 4, 8, 1),
@@ -125,10 +120,14 @@ RESTART_KEYS = {f.key for _, fields in SECTIONS for f in fields if f.restart}
 
 
 def schema(voice_options: list[list[str]]) -> list[dict[str, Any]]:
+    """The sections above; fields of folder skills (the [[settings]] of their skill.toml) join "Модули"."""
+    from assistant import skillpack
+
+    extra = skillpack.settings_fields(skillpack.discover())
     out = []
     for title, fields in SECTIONS:
         items = []
-        for f in fields:
+        for f in fields + (extra if title == "Модули" else []):
             d = asdict(f)
             if f.key == "tts.voice":
                 d["options"] = voice_options

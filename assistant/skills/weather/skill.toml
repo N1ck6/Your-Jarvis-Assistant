@@ -1,0 +1,9 @@
+[skill]
+id = "weather"
+name = "Погода"
+version = "1.0.0"
+author = "Jarvis"
+description = "Погода сейчас и прогноз на неделю (Open-Meteo, без ключа): «какая погода», «а завтра?», «когда будет дождь»."
+api = 1
+entry = "main:create"
+permissions = ["network", "local_llm", "cloud_llm"]

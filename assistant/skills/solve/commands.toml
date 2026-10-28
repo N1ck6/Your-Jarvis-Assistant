@@ -1,0 +1,3 @@
+# Phrases are recognized in main.py: it also decides where the task is (screen, selection, the phrase itself).
+examples = ["реши задачу с экрана", "реши выделенную задачу", "реши эту задачу", "реши задачу <условие задачи>",
+            "найди икс <уравнение>"]

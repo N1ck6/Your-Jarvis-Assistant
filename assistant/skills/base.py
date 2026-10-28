@@ -4,7 +4,7 @@ A skill is a self-contained feature: it can be triggered by a fast regex match
 (no LLM, milliseconds) and/or exposed to the local LLM as a tool.
 
 To add a skill: a folder data/skills/<id>/ with skill.toml, commands.toml and main.py (`def create() -> Skill`);
-the skill uses Jarvis through `self.ctx` (Context below). See docs/SKILLS.md.
+the skill uses Jarvis through `self.ctx` (Context below). See SKILLS.md.
 Old single-file modules (assistant/skills/<name>.py, listed in [skills].enabled) still load.
 """
 from __future__ import annotations

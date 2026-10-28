@@ -102,6 +102,7 @@ Python 3.12, Microsoft Visual C++ Runtime, [Ollama](https://ollama.com) с мо�
 - Свои значения сохраняются в `data/settings.json`, все параметры с описанием — `config/default.toml`.
 - Музыка берётся из папки «Музыка» Windows, подпапки — плейлисты.
 - Свои сценарии «фраза → действия»: трей → «Мои сценарии…» (пример — в [COMMANDS.md](COMMANDS.md#свои-сценарии)).
+- Свои навыки: папка в `data/skills/<id>/` с манифестом, фразами и кодом — формат в [SKILLS.md](SKILLS.md).
 
 ## Если что-то не так
 

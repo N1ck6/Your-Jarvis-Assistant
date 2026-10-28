@@ -1,4 +1,4 @@
-"""Skills as folders: a manifest, phrases, prompts and code next to each other. docs/SKILLS.md describes the format.
+"""Skills as folders: a manifest, phrases, prompts and code next to each other. SKILLS.md describes the format.
 
 Built-in skills live in assistant/skills/<id>/, the user's own (or installed) ones in data/skills/<id>/: updates of
 Jarvis never touch the latter. A folder skill is found by its skill.toml; the old single-file modules

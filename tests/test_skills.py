@@ -365,6 +365,10 @@ def test_weather_followup_ignores_other_phrases(app):
     ("реши задачу: два поезда вышли навстречу друг другу", "solve", "said"),
     ("реши уравнение x в квадрате минус 4 равно 0", "solve", "said"),
     ("реши 2 плюс 2", "calc", "calc"),
+    ("икс из выражения x в квадрате минус 5 икс плюс 6 равно ноль", "solve", "said"),
+    ("найди икс из уравнения 2x плюс 3 равно 7", "solve", "said"), ("найди икс", "solve", "auto"),
+    ("чему равен икс", "solve", "auto"), ("найди корни уравнения на экране", "solve", "screen"),
+    ("вычисли производную x в кубе плюс 2x", "solve", "said"), ("посчитай 5 умножить на 3", "calc", "calc"),
     ("новости", "news", "news"), ("что нового в Москве", "news", "news"), ("новости технологий", "news", "news"),
     ("запомни мой голос", "voiceprint", "enroll"), ("забудь мой голос", "voiceprint", "forget"),
     ("ты узнаешь мой голос", "voiceprint", "check"),
@@ -461,7 +465,15 @@ def test_solve_shows_solution_and_answer_apart(app, monkeypatch):
         return "".join([d async for d in reply.stream])
 
     speech = asyncio.run(run())
-    assert sent[0][0] == app.cfg.llm.vision_chain and sent[0][1][0].images == [b"png"]
+    assert sent[0][0] == ["gemini"] and sent[0][1][0].images == [b"png"]   # the cloud only, no local guesswork
     assert [d.title for d in decks] == ["Решение", "Ответ"] and all(d.pinned for d in decks)
     assert decks[1].cards[0].screen == "3 часа"
     assert speech == "Решаю. Ответ: 3 часа"
+
+    # The local fallback, when allowed, is marked as possibly wrong.
+    decks.clear()
+    monkeypatch.setattr(app.cfg.llm, "solve_local_fallback", True)
+    monkeypatch.setattr(app.llm, "last_provider", "local")
+    speech = asyncio.run(run())
+    assert sent[1][0] == ["gemini", "local"]
+    assert decks[1].title.startswith("Ответ · локально") and speech.startswith("Решаю. Облако недоступно")

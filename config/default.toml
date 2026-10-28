@@ -82,8 +82,12 @@ ok_for_actions = true
 info_chain = ["groq", "gemini", "local"]
 # Screen help (images): Groq free tier has no vision models.
 vision_chain = ["gemini", "local"]
-# "реши задачу" given as text (said or selected); a task from the screen uses vision_chain.
-solve_chain = ["gemini", "groq", "local"]
+# "реши задачу": the cloud only. The local model often makes up a wrong answer; with solve_local_fallback it is
+# used when the cloud is down, and its answer is marked as possibly wrong. A task from the screen: Gemini only.
+solve_chain = ["gemini", "groq"]
+solve_local_fallback = false
+# Lite solves school tasks and photos in 1–2 s; the full Flash is the fallback (on the free tier it often hangs or 503s).
+solve_models = ["gemini-flash-lite-latest", "gemini-flash-latest"]
 # Everything else (chat, commands, explanations).
 local_chain = ["local"]
 # After a 429 / quota error the provider is skipped for this long.

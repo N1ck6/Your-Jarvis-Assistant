@@ -23,17 +23,23 @@ log = logging.getLogger("solve")
 
 _TASK = r"(?:задач\w*|задани\w*|пример\w*|уравнени\w*|неравенств\w*|упражнени\w*|вопрос\w*|тест\w*|номер\w*|систем\w*)"
 _THIS = r"(?:эт\w*|ее|его|их|вот эт\w*|вот|за меня|сам|мне)"
+# What a maths task asks to find. Not "скорость" or "объем": "узнай скорость интернета" is not a task.
+_UNKNOWN = (r"икс|x|игрек|y|неизвестн\w*|корни|корень уравнения|значение (?:выражения|функции)|производн\w*|"
+            r"интеграл|предел|площадь|периметр")
+_MATH_VERB = r"(?:найди|найти|определи|вычисли|чему (?:равен|равна|равно|равны))"
 _SOLVE = re.compile(
     rf"^(?:а |теперь |давай |ну |тогда |и )*(?:"
     rf"(?:реши|решите|решить|решай|порешай|помоги решить|помоги с решением|можешь решить|сможешь решить)(?: (?P<rest>.*))?|"
     rf"(?:сделай|выполни|ответь на|дай ответ на|найди ответ на|подскажи ответ на) "
-    rf"(?P<task>(?:{_THIS} )+{_TASK}.*|{_TASK}(?: (?:с|со|на|в|из) .*)?)"
+    rf"(?P<task>(?:{_THIS} )+{_TASK}.*|{_TASK}(?: (?:с|со|на|в|из) .*)?)|"
+    # "найди икс из выражения ...", "чему равен икс", "вычисли производную ...": maths without the word "реши"
+    rf"{_MATH_VERB} (?P<math>(?:{_UNKNOWN})(?: .*)?)|(?P<expr>(?:{_UNKNOWN}) из (?:выражени|уравнени|услови)\w*(?: .*)?)"
     rf")$")
 _SCREEN = re.compile(r"\b(экран\w*|скрин\w*|монитор\w*|окн[оеа]|картинк\w*|фото\w*|изображени\w*)\b")
 _SELECTED = re.compile(r"\b(выделен\w*|выделил\w*|выделени\w*)\b")
 _POINTER = re.compile(rf"\b(?:{_THIS}|{_TASK})\b")
 # Words that point at the task without stating it: "реши эту задачу за меня пожалуйста".
-_FILLER = re.compile(rf"\b(?:{_THIS}|{_TASK}|с|со|на|в|из|по|и|у|меня|тут|здесь|там|пожалуйста|быстро|скорее|"
+_FILLER = re.compile(rf"\b(?:{_THIS}|{_TASK}|{_UNKNOWN}|выражени\w*|услови\w*|с|со|на|в|из|по|и|у|меня|тут|здесь|там|пожалуйста|быстро|скорее|"
                      r"плиз|сейчас|которая|который|которое|написан\w*|есть|подробно|кратко|коротко)\b")
 REGION_TTL_SEC = 300  # "реши эту задачу" after "что на экране": the region shown that long ago is still "эта"
 
@@ -46,7 +52,8 @@ PROMPT = """Реши задачу{where}. Ответ дай строго в дв
 Никакого LaTeX: без знаков $, обратной косой черты и \\boxed. Формулы пиши в строку символами: x², √2, π, ≤, ≥, ·, /.
 Ответ не заключай в скобки и кавычки. Если вопросов или пунктов несколько — ответы через точку с запятой.
 Если в задаче варианты ответа — назови верный вариант и его текст.
-Если задачи или вопроса нет — напиши только: НЕТ ЗАДАЧИ."""
+Уравнение, неравенство или выражение без вопроса — тоже задача: реши уравнение, найди значение, упрости.
+Только если там совсем нет ни задачи, ни вопроса, ни выражения — напиши: НЕТ ЗАДАЧИ."""
 
 _HEAD = re.compile(r"^\W*(решение|ответ|answer|solution)\W*?:?\s*", re.I)
 _MD_LINE = re.compile(r"^\s*(?:#{1,6}\s*|>\s*|[-*•+]\s+|```\w*\s*$)")
@@ -64,14 +71,16 @@ class SolveSkill(Skill):
         'реши выделенную задачу',
         'реши эту задачу',
         'реши задачу <условие задачи>',
+        'найди икс <уравнение>',
     ]
 
     def match(self, text: str) -> Intent | None:
         m = _SOLVE.match(text)
         if not m:
             return None
-        rest = (m.group("rest") or m.group("task") or "").strip()
-        if rest and not any(p.search(rest) for p in (_POINTER, _SCREEN, _SELECTED)):
+        maths = m.group("math") or m.group("expr")
+        rest = (m.group("rest") or m.group("task") or maths or "").strip()
+        if rest and not maths and not any(p.search(rest) for p in (_POINTER, _SCREEN, _SELECTED)):
             return None  # "реши 2 плюс 2": plain arithmetic, the calculator answers it at once
         if _SCREEN.search(rest):
             source = "screen"
@@ -131,11 +140,16 @@ class SolveSkill(Skill):
         cfg = self.app.cfg.llm
         content = PROMPT.format(where=where) + (f"\n\nЗадача:\n{task}" if task else "")
         messages = [Msg("user", content, images=images)]
-        chain = cfg.vision_chain if images else cfg.solve_chain
-        raw = await self.app.llm.complete(chain, messages, web=False, max_tokens=3000)
+        # The cloud only: the local model often makes up a wrong answer. Groq's free tier has no vision.
+        chain = [p for p in (cfg.vision_chain if images else cfg.solve_chain) if p != "local" and not (images and p == "groq")]
+        if cfg.solve_local_fallback:
+            chain.append("local")
+        raw = await self.app.llm.complete(chain, messages, web=False, max_tokens=3000, models={"gemini": cfg.solve_models})
         if not raw or raw == FAIL_TEXT:
-            yield "Не получилось решить: облако сейчас не отвечает."
+            yield ("Не получилось решить: ни облако, ни локальная модель не ответили." if cfg.solve_local_fallback else
+                   "Не получилось решить: облако сейчас не отвечает, а локальной модели такие задачи я не доверяю.")
             return
+        local = self.app.llm.last_provider == "local"
         if "НЕТ ЗАДАЧИ" in raw.upper() and len(raw) < 40:
             yield "Задачи здесь не вижу."
             return
@@ -144,11 +158,13 @@ class SolveSkill(Skill):
         if solution:
             self.app.ui.show_deck(Deck(title="Решение", cards=[Card("", solution, "")], done=True, pinned=True))
         if answer:
-            self.app.ui.show_deck(Deck(title="Ответ", cards=[Card("", answer, "")], done=True, pinned=True))
+            title = "Ответ · локально, может быть неточно" if local else "Ответ"
+            self.app.ui.show_deck(Deck(title=title, cards=[Card("", answer, "")], done=True, pinned=True))
+        caution = "Облако недоступно, решил локально — лучше проверьте. " if local else ""
         if answer and len(answer) <= 120:
-            yield "Ответ: " + spoken(answer)
+            yield caution + "Ответ: " + spoken(answer)
         else:
-            yield "Решение и ответ на экране."
+            yield caution + "Решение и ответ на экране."
 
 
 def split_solution(raw: str) -> tuple[str, str]:

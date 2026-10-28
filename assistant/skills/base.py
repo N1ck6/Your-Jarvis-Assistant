@@ -78,6 +78,7 @@ class Skill(ABC):
     title: str = ""          # human name for docs/tray
     examples: list[str] = []  # canonical commands for the router catalog ("<...>" = a value)
     manifest: "Manifest | None" = None  # a folder skill (assistant/skills/<id>/, data/skills/<id>/); None: old module
+    files: tuple = ()                   # the user skill's files when loaded (assistant.skillpack.signature)
 
     def setup(self, app: "Assistant") -> None:
         self.app = app
@@ -230,36 +231,52 @@ class Context:
         return next((s for s in self.app.skills if s.name == name), None)
 
 
-def load_skills(names: list[str], disabled: list[str] | None = None, user_dir: Path | None = None) -> list[Skill]:
-    """Folder skills (assistant/skills/<id>/, data/skills/<id>/) and old modules (assistant/skills/<name>.py).
-    The order of `names` is the matching order; folder skills not named there go by their before/after."""
+def plan_skills(names: list[str], disabled: list[str] | None = None,
+                user_dir: Path | None = None) -> list[tuple[str, "Manifest | None"]]:
+    """Which skills to load and in which order: (id, manifest; None for an old single-file module)."""
     from assistant import skillpack
 
     manifests = {m.id: m for m in skillpack.discover(user_dir)}
+    off = {d for d in disabled or [] if not (d in manifests and manifests[d].required)}
+    return [(name, manifests.get(name)) for name in skillpack.order(names, manifests, off)]
+
+
+def create_skill(name: str, m: "Manifest | None", fresh: bool = False) -> Skill:
+    """A skill object from its folder (or an old module assistant/skills/<name>.py). Raises if it cannot load."""
+    from assistant import skillpack
+
+    if m is None:
+        return importlib.import_module(f"assistant.skills.{name}").create()
+    skill = skillpack.import_entry(m, fresh)() if m.entry else _CommandsOnly()
+    skill.manifest = m
+    skill.name = m.id
+    skill.title = skill.title or m.name
+    if m.examples:
+        skill.examples = m.examples
+    skill.files = skillpack.signature(m.path) if not m.builtin else ()  # changed files -> read again
+    return skill
+
+
+def load_skills(names: list[str], disabled: list[str] | None = None, user_dir: Path | None = None) -> list[Skill]:
+    """Folder skills (assistant/skills/<id>/, data/skills/<id>/) in the order of their priority, and old modules
+    (assistant/skills/<name>.py) named in `names` ([skills] enabled), which also fixes the order of the skills it names."""
     skills: list[Skill] = []
-    for name in skillpack.order(names, manifests, set(disabled or [])):
+    for name, m in plan_skills(names, disabled, user_dir):
         try:
-            m = manifests.get(name)
-            if m is None:
-                module = importlib.import_module(f"assistant.skills.{name}")
-                skills.append(module.create())
-                continue
-            skill = skillpack.import_entry(m)() if m.entry else _CommandsOnly()
-            skill.manifest = m
-            skill.name = m.id
-            skill.title = skill.title or m.name
-            if m.examples:
-                skill.examples = m.examples
-            skills.append(skill)
+            skills.append(create_skill(name, m))
         except Exception:
             log.exception("Модуль %s не загружен", name)
+    warn_missing(skills)
+    log.info("Модули: %s", ", ".join(s.name for s in skills))
+    return skills
+
+
+def warn_missing(skills: list[Skill]) -> None:
     loaded = {s.name for s in skills}
     for s in skills:
         missing = [r for r in (s.manifest.requires if s.manifest else []) if r not in loaded]
         if missing:
             log.warning("Навыку %s нужны %s — они не загружены, часть функций не будет работать", s.name, missing)
-    log.info("Модули: %s", ", ".join(s.name for s in skills))
-    return skills
 
 
 async def run_blocking(func, *args):

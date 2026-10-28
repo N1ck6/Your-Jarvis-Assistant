@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Перевести, объяснить, пересказать, исправить, переписать или прочитать текст, выделенный в любом окне."
 api = 1
+priority = 110
 entry = "main:create"
 permissions = ["clipboard", "keyboard", "local_llm"]

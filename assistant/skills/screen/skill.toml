@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Выделите область экрана — Джарвис объяснит, что там, или скопирует текст. Картинка не сохраняется на диск и в буфер."
 api = 1
+priority = 120
 entry = "main:create"
 permissions = ["screen", "clipboard", "cloud_llm", "local_llm"]

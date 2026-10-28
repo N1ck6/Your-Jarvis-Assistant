@@ -296,8 +296,41 @@ async function phrasesPage() {
           h("div", { class: "panel" }, h("table", {}, h("tr", {}, h("th", {}, "Фраза"), h("th", {}, "Команды"), h("th", {}, "Раз"), h("th", {})), rows))];
 }
 
+const PERMS = { screen: "экран", clipboard: "буфер обмена", cloud_llm: "облачные модели", local_llm: "локальная модель",
+  browser: "браузер", files: "файлы", power: "питание ПК", keyboard: "клавиатура", network: "интернет", apps: "запуск программ",
+  microphone: "микрофон" };
+
+async function skillsPage() {
+  const data = await api("/api/skills");
+  const after = (r) => toast(r.live ? "Готово" : "Сохранено — применится после перезапуска");
+  const card = (s) => {
+    const toggle = h("input", { type: "checkbox", checked: s.enabled, disabled: s.required, title: s.required ? "Нельзя выключить" : "",
+      onchange: async () => { try { after(await api("/api/skills/toggle", { id: s.id, enabled: toggle.checked })); route("Навыки"); }
+                              catch (e) { toast(e.message); toggle.checked = !toggle.checked; } } });
+    const state = s.loaded === false && s.enabled ? h("small", { class: "bad" }, "не загрузился — см. журнал") : null;
+    return h("div", { class: "card" },
+      h("div", { class: "row" }, h("h4", { class: "grow" }, s.name), toggle),
+      h("p", {}, s.description),
+      s.examples.length ? h("p", {}, "«" + s.examples.join("», «") + "»") : null,
+      h("div", { class: "metrics" }, (s.builtin ? "встроенный" : "свой") + ` · ${s.id} · v${s.version}` + (s.author && !s.builtin ? ` · ${s.author}` : "")),
+      s.permissions.length ? h("div", { class: "row" }, s.permissions.map(p => h("span", { class: "chip" }, PERMS[p] || p))) : null,
+      state,
+      s.builtin ? null : h("div", { class: "row" }, h("button", { class: "btn ghost small", onclick: async () => {
+        if (!confirm(`Убрать навык «${s.name}»? Папка переедет в data/skills_removed.`)) return;
+        try { after(await api("/api/skills/remove", { id: s.id })); route("Навыки"); } catch (e) { toast(e.message); } } }, "Удалить")));
+  };
+  const own = data.skills.filter(s => !s.builtin), builtin = data.skills.filter(s => s.builtin);
+  return [h("p", { class: "note" }, "Навык — папка с описанием, фразами и кодом. Свои навыки кладите в папку ниже: Джарвис подхватит их сам за несколько секунд. Формат — SKILLS.md в папке Джарвиса."),
+    h("div", { class: "row", style: "margin-bottom:14px" }, h("span", { class: "metrics grow path" }, data.folder),
+      h("button", { class: "btn ghost", onclick: () => api("/api/skills/open-folder", {}) }, "Открыть папку"),
+      h("button", { class: "btn primary", onclick: async () => { try { after(await api("/api/skills/reload", {})); route("Навыки"); } catch (e) { toast(e.message); } } }, "Перечитать")),
+    data.errors.length ? [h("h3", {}, "Не загрузились"), h("div", { class: "panel" }, h("table", {}, data.errors.map(e => h("tr", {}, h("td", {}, e.folder), h("td", { class: "bad" }, e.error)))))] : null,
+    h("h3", {}, "Свои"), own.length ? h("div", { class: "grid" }, own.map(card)) : h("p", { class: "note" }, "Пока нет. Положите папку навыка в папку выше."),
+    h("h3", {}, "Встроенные"), h("div", { class: "grid" }, builtin.map(card))].flat().filter(Boolean);
+}
+
 // ---------------------------------------------------------------- routing
-const EXTRA = ["Сценарии", "Выученные фразы"];
+const EXTRA = ["Навыки", "Сценарии", "Выученные фразы"];
 async function route(title) {
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.textContent === title));
   const page = $("#page");
@@ -306,6 +339,7 @@ async function route(title) {
   try {
     if (title === "Голос") body = await voicePage(section.fields);
     else if (title === "ИИ") body = await aiPage(section.fields);
+    else if (title === "Навыки") body = await skillsPage();
     else if (title === "Сценарии") body = await scenariosPage();
     else if (title === "Выученные фразы") body = await phrasesPage();
     else body = [renderFields(section.fields)];

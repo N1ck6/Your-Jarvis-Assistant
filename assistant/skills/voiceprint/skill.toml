@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Голос владельца: запомнить, забыть, проверить."
 api = 1
+priority = 180
 entry = "main:create"
 permissions = ["microphone"]

@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Поиск в браузере: Яндекс, Google, YouTube, Википедия, карты, Маркет."
 api = 1
+priority = 150
 entry = "main:create"
 permissions = ["browser"]
 

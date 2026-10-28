@@ -57,6 +57,10 @@ class Host:
     def restart(self) -> None:
         raise HTTPException(400, "Перезапуск доступен, когда страница открыта из работающего Джарвиса")
 
+    def reload_skills(self) -> list[str] | None:
+        """Applies skill changes at once; None: only after a restart (the page is open without Jarvis)."""
+        return None
+
     def phrasebook(self):
         from assistant.router import PHRASEBOOK, _JsonStore
 
@@ -81,6 +85,13 @@ class AssistantHost(Host):
     def restart(self) -> None:
         threading.Timer(0.5, self.app.restart).start()
 
+    def reload_skills(self) -> list[str] | None:
+        import asyncio
+
+        if self.app.loop is None:
+            return None
+        return asyncio.run_coroutine_threadsafe(self.app.reload_skills(), self.app.loop).result(timeout=30)
+
     def phrasebook(self):
         return self.app.brain.router.phrasebook
 
@@ -90,6 +101,11 @@ class AssistantHost(Host):
 
 
 # ---------------------------------------------------------------- request bodies
+class SkillRequest(BaseModel):
+    id: str
+    enabled: bool = True
+
+
 class SynthRequest(BaseModel):
     text: str
     rate: float = 1.0
@@ -251,6 +267,49 @@ def create_app(host: Host) -> FastAPI:
         except ValueError as exc:  # a setting of a folder skill
             raise HTTPException(400, f"Неверное значение — {exc}") from exc
         return {"ok": True, "restart": restart}
+
+    # ------------------------------------------------------------- skills
+    @app.get("/api/skills")
+    def get_skills() -> dict:
+        manifests, errors = skillpack.scan()
+        disabled = set(cfg.skills.disabled)
+        loaded = getattr(host, "app", None) and {s.name for s in host.app.skills}
+        items = [{"id": m.id, "name": m.name, "description": m.description, "version": m.version, "author": m.author,
+                  "builtin": m.builtin, "required": m.required, "permissions": m.permissions, "examples": m.examples[:4],
+                  "enabled": m.id not in disabled or m.required, "loaded": None if loaded is None else m.id in loaded}
+                 for m in sorted(manifests, key=lambda m: (m.builtin, m.name.lower()))]
+        return {"skills": items, "errors": [{"folder": f, "error": e} for f, e in errors],
+                "folder": str(skillpack.USER_DIR), "live": host.can_restart}
+
+    @app.post("/api/skills/toggle")
+    def toggle_skill(req: SkillRequest) -> dict:
+        m = next((x for x in skillpack.discover() if x.id == req.id), None)
+        if m is None:
+            raise HTTPException(404, "Нет такого навыка")
+        if m.required and not req.enabled:
+            raise HTTPException(400, "Этот навык нельзя выключить: без него не работают «стоп», «выход» и «помощь»")
+        disabled = [d for d in cfg.skills.disabled if d != req.id] + ([] if req.enabled else [req.id])
+        host.apply_settings({"skills.disabled": disabled})
+        return {"ok": True, "live": host.reload_skills() is not None}
+
+    @app.post("/api/skills/remove")
+    def remove_skill(req: SkillRequest) -> dict:
+        try:
+            moved = skillpack.remove_user_skill(req.id)
+        except skillpack.ManifestError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "moved_to": str(moved), "live": host.reload_skills() is not None}
+
+    @app.post("/api/skills/reload")
+    def reload_skills() -> dict:
+        loaded = host.reload_skills()
+        return {"ok": True, "live": loaded is not None, "loaded": loaded or []}
+
+    @app.post("/api/skills/open-folder")
+    def open_skills_folder() -> dict:
+        skillpack.USER_DIR.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(skillpack.USER_DIR))  # noqa: S606 - our own data folder
+        return {"ok": True}
 
     @app.post("/api/pick-folder")
     def post_pick_folder(req: FolderRequest) -> dict:

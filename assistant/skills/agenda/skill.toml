@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Календарь из закрытых ссылок iCal: Google, Outlook, Яндекс (только чтение)."
 api = 1
+priority = 220
 entry = "main:create"
 permissions = ["network"]
 config_key = "calendar"   # the user's links are kept under "calendar" in data/settings.json

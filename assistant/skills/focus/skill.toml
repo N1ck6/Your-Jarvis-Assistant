@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Циклы работы и перерыва с голосовыми переходами: «помодоро», «помодоро на 50 минут», «стоп помодоро»."
 api = 1
+priority = 170
 entry = "main:create"
 permissions = []
 

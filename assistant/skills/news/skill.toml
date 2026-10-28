@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Новости: главное, города или по теме из Google News (без ключа и токенов)."
 api = 1
+priority = 210
 entry = "main:create"
 permissions = ["network"]
 

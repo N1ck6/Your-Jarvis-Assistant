@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Диктовка в активное окно."
 api = 1
+priority = 100
 entry = "main:create"
 permissions = ["microphone", "keyboard"]

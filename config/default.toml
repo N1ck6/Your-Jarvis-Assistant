@@ -130,9 +130,10 @@ allowed_dirs = ["~/Desktop", "~/Documents", "~/Downloads", "~/Music", "~/Picture
 allow_cmd = true
 
 [skills]
-# Order matters: the first module whose phrase matches wins. User scenarios go first.
-enabled = ["scenarios", "solve", "calc", "visual", "system", "power", "web", "media", "music", "dictation", "selection", "screen", "notes", "windows",
-           "search", "timers", "focus", "voiceprint", "memory", "briefing", "news", "agenda", "pc", "explain", "voice", "weather", "apps"]
+# Skills are folders: built-in in assistant/skills/<id>/, your own in data/skills/<id>/ (SKILLS.md).
+# The first skill whose phrase matches wins; the order is the "priority" in each skill.toml.
+# Skills found but not loaded (Настройки → Навыки):
+disabled = []
 
 [apps]
 browser_home = "https://ya.ru"

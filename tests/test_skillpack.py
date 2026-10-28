@@ -159,7 +159,7 @@ def test_user_skill_from_folder(tmp_path, settings_file):
     a.skills = load_skills(["calc", "apps"], disabled=others, user_dir=tmp_path / "skills")
     for s in a.skills:
         s.setup(a)
-    assert [s.name for s in a.skills] == ["hello", "calc", "apps"]
+    assert [s.name for s in a.skills] == ["hello", "calc", "apps", "system"]   # system cannot be turned off
     hello = a.skills[0]
     assert not hello.manifest.builtin and type(hello).__module__ == "jarvis_skills.hello.main"
 
@@ -174,7 +174,7 @@ def test_user_skill_from_folder(tmp_path, settings_file):
 def test_skill_without_code(tmp_path):
     manifest = HELLO.replace('api = 1', 'api = 1\n    entry = ""')
     write_skill(tmp_path, "hello", manifest, HELLO_COMMANDS)
-    skills = load_skills([], disabled=BUILTIN_IDS, user_dir=tmp_path)
+    skills = [s for s in load_skills([], disabled=BUILTIN_IDS, user_dir=tmp_path) if s.name != "system"]
     assert [s.name for s in skills] == ["hello"]
     assert asyncio.run(skills[0].handle(skills[0].match("попрощайся"))).speech == "До свидания."
 
@@ -338,7 +338,7 @@ def test_prompt_skill_without_code(tmp_path, settings_file):
     a.skills = load_skills([], disabled=BUILTIN_IDS, user_dir=tmp_path)
     for s in a.skills:
         s.setup(a)
-    skill = a.skills[0]
+    skill = next(s for s in a.skills if s.name == "joke")
     llm, cards = FakeLlm("Программист заходит в бар…", "groq"), []
     a.llm = llm
     a.ui.show_deck = lambda d: cards.append(d.title)
@@ -361,3 +361,88 @@ def test_bad_prompt_command(tmp_path, old, new, error):
         (folder / "prompts" / "joke.md").write_text("x", encoding="utf-8")
     with pytest.raises(skillpack.ManifestError, match=error):
         skillpack.read_manifest(folder, builtin=False)
+
+
+# ---------------------------------------------------------------- priorities, turning off, reading again
+def test_builtin_order_comes_from_priorities():
+    from assistant.skills.base import plan_skills
+
+    order = [n for n, _ in plan_skills([], [])]
+    assert order[:3] == ["scenarios", "solve", "calc"] and order[-1] == "apps"
+    assert "system" in [n for n, _ in plan_skills([], ["system", "news"])]          # required: stays
+    assert "news" not in [n for n, _ in plan_skills([], ["system", "news"])]
+
+
+def _reloading_app(tmp_path, monkeypatch):
+    import types
+
+    from assistant.assistant import Assistant
+
+    monkeypatch.setattr(skillpack, "USER_DIR", tmp_path)
+    a = FakeApp()
+    a.skills = load_skills([], disabled=BUILTIN_IDS)
+    a.brain = Brain(a, a.skills)
+    a._stop_skill = types.MethodType(Assistant._stop_skill, a)
+    a.reload = lambda: [n for n in asyncio.run(Assistant.reload_skills(a)) if n != "system"]
+    return a
+
+
+def test_reload_picks_up_new_edited_and_removed_skills(tmp_path, monkeypatch, settings_file):
+    a = _reloading_app(tmp_path, monkeypatch)
+    monkeypatch.setattr(a.cfg.skills, "disabled", BUILTIN_IDS)
+    assert a.reload() == []
+
+    def hello():
+        return next(s for s in a.skills if s.name == "hello")
+
+    folder = write_skill(tmp_path, "hello", HELLO, HELLO_COMMANDS, HELLO_CODE, "Я Джарвис.")
+    assert a.reload() == ["hello"]
+    first = hello()
+    assert a.brain.match_skill("поздоровайся")[0] is first
+    assert a.reload() == ["hello"] and hello() is first                       # unchanged: the same object
+
+    import os
+    import time
+    (folder / "prompts" / "hello.md").write_text("Я снова тут.", encoding="utf-8")
+    later = time.time() + 5
+    os.utime(folder / "prompts" / "hello.md", (later, later))
+    a.reload()
+    assert hello() is not first
+    assert asyncio.run(hello().handle(hello().match("поздоровайся"))).speech == "Здравствуйте. Я снова тут."
+
+    (folder / "main.py").write_text("this is not python", encoding="utf-8")
+    os.utime(folder / "main.py", (later + 5, later + 5))
+    working = hello()
+    a.reload()
+    assert hello() is working                                                  # broken edit: the old one stays
+
+    skillpack.remove_user_skill("hello", tmp_path)
+    assert a.reload() == [] and a.brain.match_skill("поздоровайся") is None
+    assert list((tmp_path.parent / "skills_removed").iterdir())
+
+
+def test_skills_api(tmp_path, monkeypatch, settings_file):
+    from fastapi.testclient import TestClient
+
+    from assistant.tts.manager import TtsManager
+    from assistant.voicelab.server import Host, create_app
+
+    user = tmp_path / "skills"
+    monkeypatch.setattr(skillpack, "USER_DIR", user)
+    write_skill(user, "hello", HELLO, HELLO_COMMANDS, HELLO_CODE)
+    write_skill(user, "broken", HELLO.replace('"hello"', '"other"'), HELLO_COMMANDS, HELLO_CODE)
+    cfg = config.load_settings()
+    client = TestClient(create_app(Host(cfg, TtsManager("silero:eugene"))), base_url=f"http://127.0.0.1:{cfg.voicelab.port}")
+    data = client.get("/api/skills").json()
+    skills = {s["id"]: s for s in data["skills"]}
+    assert skills["hello"]["builtin"] is False and skills["focus"]["builtin"] is True and skills["system"]["required"]
+    assert [e["folder"] for e in data["errors"]] == ["broken"]
+
+    assert client.post("/api/skills/toggle", json={"id": "news", "enabled": False}).json() == {"ok": True, "live": False}
+    assert config.load_user_overrides()["skills"]["disabled"] == ["news"]
+    assert client.get("/api/skills").json()["skills"][[s["id"] for s in client.get("/api/skills").json()["skills"]]
+                                                       .index("news")]["enabled"] is False
+    assert client.post("/api/skills/toggle", json={"id": "system", "enabled": False}).status_code == 400
+    assert client.post("/api/skills/remove", json={"id": "focus"}).status_code == 400       # built-in: not removable
+    assert client.post("/api/skills/remove", json={"id": "hello"}).status_code == 200
+    assert not (user / "hello").exists()

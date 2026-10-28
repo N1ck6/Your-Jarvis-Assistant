@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Открыть приложение или сайт голосом: меню «Пуск» и свои псевдонимы."
 api = 1
+priority = 1000   # last: «открой <что угодно>» would take other skills' phrases
 entry = "main:create"
 permissions = ["apps"]

@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Картинки к вопросам: молекулы, графики функций, геометрия."
 api = 1
+priority = 40
 entry = "main:create"
 permissions = ["network"]

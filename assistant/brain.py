@@ -169,10 +169,18 @@ class Brain:
         # Replies of a compound command that must be spoken after the main one.
         self.extra: list[Reply] = []
         self.router = Router(app)
-        self.tools: dict[str, tuple[Skill | None, Tool]] = {ASK_INTERNET.name: (None, ASK_INTERNET)}
-        for skill in skills:
-            for tool in skill.tools():
-                self.tools[tool.name] = (skill, tool)
+        self.tools: dict[str, tuple[Skill | None, Tool]] = {}
+        self.rebuild_tools()
+
+    def rebuild_tools(self) -> None:
+        """The local model's tools from the loaded skills (again after skills were added or removed)."""
+        self.tools = {ASK_INTERNET.name: (None, ASK_INTERNET)}
+        for skill in self.skills:
+            try:
+                for tool in skill.tools():
+                    self.tools[tool.name] = (skill, tool)
+            except Exception:
+                log.exception("tools() в модуле %s", skill.name)
 
     def _system(self, addon: str) -> Msg:
         cfg = self.app.cfg.assistant

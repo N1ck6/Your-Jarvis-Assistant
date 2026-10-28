@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Решает задачу с экрана, из выделенного текста или сказанную голосом: краткое решение и ответ в двух окнах."
 api = 1
+priority = 20
 entry = "main:create"
 # Before the calculator: "реши задачу" is ours, "реши 2 плюс 2" the skill passes on to it.
 before = ["calc"]

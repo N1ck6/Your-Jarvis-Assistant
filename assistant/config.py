@@ -123,7 +123,8 @@ class FilesCfg(BaseModel):
 
 
 class SkillsCfg(BaseModel):
-    enabled: list[str] = Field(default_factory=list)   # built-in skills in matching order
+    # The old way to set the matching order (still honoured when present in data/settings.json); now: priority in skill.toml.
+    enabled: list[str] = Field(default_factory=list)
     disabled: list[str] = Field(default_factory=list)  # skill folders found but not loaded (data/skills/<id>/ too)
 
 

@@ -12,6 +12,7 @@ import threading
 import time
 from typing import Callable
 
+from assistant import skillpack
 from assistant.audio import earcons
 from assistant.audio.music import MusicPlayer
 from assistant.audio.listener import ListenerCore, ListenerEvents, Microphone, Mode, Utterance
@@ -218,6 +219,7 @@ class Assistant:
         if self.mic:
             self.mic.start()
         self._watch_devices()
+        asyncio.create_task(self._watch_skills())
         asyncio.create_task(self._check_updates())
         if self.pack is None and self.cfg.voice.pack != "none":
             asyncio.create_task(self._fetch_packs())
@@ -279,6 +281,65 @@ class Assistant:
                 self.ui.notify("Обновление Джарвиса", f"На GitHub {news}")
             await asyncio.sleep(6 * 3600)
 
+    # ------------------------------------------------------------------ skills
+    async def reload_skills(self) -> list[str]:
+        """Skills turned on or off, added to data/skills/ or edited there: applied without a restart.
+        Unchanged skills keep running (their timers, playing music). Returns the ids of the loaded skills."""
+        from assistant.skills.base import create_skill, plan_skills, warn_missing
+
+        current = {s.name: s for s in self.skills}
+        new: list = []
+        for name, m in plan_skills(self.cfg.skills.enabled, self.cfg.skills.disabled):
+            old = current.get(name)
+            changed = old is not None and m is not None and not m.builtin and skillpack.signature(m.path) != old.files
+            if old is not None and not changed:
+                new.append(old)
+                continue
+            try:
+                skill = create_skill(name, m, fresh=changed)
+                skill.setup(self)
+                await skill.start()
+            except Exception:
+                log.exception("Навык %s не загружен", name)
+                if old is not None:
+                    new.append(old)  # the edited version is broken: the old one keeps working
+                continue
+            if old is not None:
+                await self._stop_skill(old)
+            log.info("Навык %s %s", name, "обновлён" if old is not None else "загружен")
+            new.append(skill)
+        kept = {id(s) for s in new}
+        for old in current.values():
+            if id(old) not in kept:
+                await self._stop_skill(old)
+                log.info("Навык %s выключен", old.name)
+        self.skills[:] = new  # the brain holds the same list
+        warn_missing(self.skills)
+        self.brain.rebuild_tools()
+        self.brain.router.reset_catalog()
+        if self.brain.last_command is not None and id(self.brain.last_command[0]) not in kept:
+            self.brain.last_command = None
+        return [s.name for s in self.skills]
+
+    async def _stop_skill(self, skill) -> None:
+        try:
+            await skill.stop()
+        except Exception:
+            log.exception("stop() %s", skill.name)
+
+    async def _watch_skills(self) -> None:
+        """Your own skills folder (data/skills/): a new, removed or edited skill is picked up in a few seconds."""
+        last = skillpack.signature(skillpack.USER_DIR)
+        while True:
+            await asyncio.sleep(3)
+            now = await asyncio.to_thread(skillpack.signature, skillpack.USER_DIR)
+            if now != last:
+                last = now
+                await asyncio.sleep(1)  # a copy in progress: let it finish
+                last = await asyncio.to_thread(skillpack.signature, skillpack.USER_DIR)
+                log.info("Папка навыков изменилась, перечитываю")
+                await self.reload_skills()
+
     # ------------------------------------------------------------------ audio devices
     def _watch_devices(self) -> None:
         from assistant.audio.devices import DeviceWatcher
@@ -325,10 +386,7 @@ class Assistant:
             self.mic.stop()
         self.speaker.shutdown()
         for skill in self.skills:
-            try:
-                await skill.stop()
-            except Exception:
-                log.exception("stop() %s", skill.name)
+            await self._stop_skill(skill)
 
     # ------------------------------------------------------------------ helpers
     def _threadsafe(self, func, *args) -> None:

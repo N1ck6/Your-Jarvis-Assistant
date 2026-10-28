@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Питание: заблокировать сразу; сон, выключение и перезагрузка — только после «да»."
 api = 1
+priority = 60
 entry = "main:create"
 permissions = ["power"]

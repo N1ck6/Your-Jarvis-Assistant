@@ -59,6 +59,8 @@ class Manifest:
     description: str = ""
     api: int = API_VERSION
     entry: str = "main:create"       # module:function inside the folder; "" for a skill made of commands only
+    priority: int = 500              # matching order: lower first (built-in: 10…270, "apps" with its "открой <что угодно>" last)
+    required: bool = False           # cannot be turned off (stop, exit, help)
     before: list[str] = field(default_factory=list)   # match phrases before these skills
     after: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)  # other skills it works with (a warning if one is missing)
@@ -100,6 +102,7 @@ def read_manifest(folder: Path, builtin: bool) -> Manifest:
     m = Manifest(id=sid, name=str(skill.get("name", sid)), path=folder, builtin=builtin,
                  version=str(skill.get("version", "0.1.0")), author=str(skill.get("author", "")),
                  description=str(skill.get("description", "")), api=api, entry=str(skill.get("entry", "main:create")),
+                 priority=int(skill.get("priority", 500)), required=bool(skill.get("required", False)),
                  before=list(skill.get("before", [])), after=list(skill.get("after", [])),
                  requires=list(skill.get("requires", [])), permissions=list(skill.get("permissions", [])),
                  config=dict(data.get("config", {})), settings=list(data.get("settings", [])),
@@ -148,7 +151,13 @@ def _check_commands(m: Manifest) -> None:
 
 def discover(user_dir: Path | None = None) -> list[Manifest]:
     """Built-in folder skills, then the user's. A user skill cannot replace a built-in one with the same id."""
+    return scan(user_dir)[0]
+
+
+def scan(user_dir: Path | None = None) -> tuple[list[Manifest], list[tuple[str, str]]]:
+    """(the skills found, [(folder, why it was skipped)]) — the settings page shows both."""
     found: dict[str, Manifest] = {}
+    errors: list[tuple[str, str]] = []
     for root, builtin in ((BUILTIN_DIR, True), (user_dir or USER_DIR, False)):
         if not root.is_dir():
             continue
@@ -157,19 +166,23 @@ def discover(user_dir: Path | None = None) -> list[Manifest]:
                 m = read_manifest(folder, builtin)
             except ManifestError as exc:
                 log.error("Навык не загружен: %s", exc)
+                errors.append((folder.name, str(exc)))
                 continue
             if m.id in found:
                 log.error("Навык %s из %s пропущен: такой уже есть", m.id, folder)
+                errors.append((folder.name, f"навык «{m.id}» уже есть среди встроенных"))
                 continue
             found[m.id] = m
-    return list(found.values())
+    return list(found.values()), errors
 
 
 def order(names: list[str], manifests: dict[str, Manifest], disabled: set[str]) -> list[str]:
-    """[skills] enabled keeps its order; folder skills that are not in it go before/after the skills they name,
-    otherwise to the end."""
-    out = [n for n in names if n not in disabled]
-    for m in manifests.values():
+    """Matching order. By priority of the manifests; `names` ([skills] enabled in the user's settings, the old way)
+    fixes the order of the skills named there. Skills with before/after go next to the skills they name."""
+    placed = [m for m in manifests.values() if not m.before and not m.after]
+    out = list(names) if names else [m.id for m in sorted(placed, key=lambda m: (m.priority, m.id))]
+    out = [n for n in out if n not in disabled]
+    for m in sorted(manifests.values(), key=lambda m: (m.priority, m.id)):
         if m.id in out or m.id in disabled:
             continue
         before = [out.index(b) for b in m.before if b in out]
@@ -183,11 +196,18 @@ def order(names: list[str], manifests: dict[str, Manifest], disabled: set[str]) 
     return out
 
 
-def import_entry(m: Manifest):
-    """The skill's create() function. Built-in: assistant.skills.<id>.<module>; user: jarvis_skills.<id>.<module>."""
+def import_entry(m: Manifest, fresh: bool = False):
+    """The skill's create() function. Built-in: assistant.skills.<id>.<module>; user: jarvis_skills.<id>.<module>.
+    A user skill is always imported from its files as they are now (it may have been edited, removed and put back).
+    fresh: its files changed — its settings are read again too."""
     import importlib
 
     module_name, _, func = m.entry.partition(":")
+    if not m.builtin:
+        for name in [n for n in sys.modules if n == f"{USER_PACKAGE}.{m.id}" or n.startswith(f"{USER_PACKAGE}.{m.id}.")]:
+            del sys.modules[name]
+        if fresh:
+            CONFIGS.pop(m.id, None)
     if m.builtin:
         package = f"assistant.skills.{m.id}"
     else:
@@ -196,11 +216,34 @@ def import_entry(m: Manifest):
             root = types.ModuleType(USER_PACKAGE)
             root.__path__ = []  # type: ignore[attr-defined]
             sys.modules[USER_PACKAGE] = root
-        if str(m.path.parent) not in root.__path__:  # type: ignore[attr-defined]
-            root.__path__.append(str(m.path.parent))  # type: ignore[attr-defined]
+        root.__path__ = [str(m.path.parent)]  # type: ignore[attr-defined]  # data/skills
+        importlib.invalidate_caches()  # files added since the last import are seen
         package = f"{USER_PACKAGE}.{m.id}"
     module = importlib.import_module(f"{package}.{module_name}")
     return getattr(module, func or "create")
+
+
+def signature(folder: Path) -> tuple:
+    """Changes when a file of the folder is added, removed or saved: the skills are then read again."""
+    if not folder.is_dir():
+        return ()
+    return tuple(sorted((str(p.relative_to(folder)), p.stat().st_mtime_ns) for p in folder.rglob("*")
+                        if p.is_file() and "__pycache__" not in p.parts))
+
+
+def remove_user_skill(sid: str, user_dir: Path | None = None) -> Path:
+    """Moves data/skills/<id> to data/skills_removed/ (not deleted: it can be put back by hand)."""
+    import shutil
+    import time
+
+    root = user_dir or USER_DIR
+    folder = root / sid
+    if not _ID.match(sid) or not (folder / "skill.toml").is_file():
+        raise ManifestError(f"своего навыка «{sid}» нет")
+    target = root.parent / "skills_removed" / f"{sid}-{time.strftime('%Y%m%d-%H%M%S')}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(folder), str(target))
+    return target
 
 
 # ---------------------------------------------------------------- per-skill settings

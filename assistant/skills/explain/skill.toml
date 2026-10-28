@@ -5,5 +5,6 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Объяснения карточками: текст на экране, голос объясняет своими словами."
 api = 1
+priority = 240
 entry = "main:create"
 permissions = ["local_llm", "cloud_llm"]

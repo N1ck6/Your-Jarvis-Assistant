@@ -5,5 +5,7 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Служебные команды: стоп, время и дата, повтор, спасибо, микрофон, помощь, выход, шутки."
 api = 1
+priority = 50
+required = true   # stop, exit, help: cannot be turned off
 entry = "main:create"
 permissions = ["microphone"]

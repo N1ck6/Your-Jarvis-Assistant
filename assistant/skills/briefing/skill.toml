@@ -5,6 +5,7 @@ version = "1.0.0"
 author = "Jarvis"
 description = "Утренняя сводка: приветствие, дата, погода, календарь, таймеры, дела."
 api = 1
+priority = 200
 entry = "main:create"
 permissions = ["network"]
 requires = ["weather", "agenda", "timers", "notes", "news"]

@@ -116,9 +116,11 @@ class ListenerCore:
         self._dict_silence = 0         # silent frames since the last voiced one
         self._dict_total = 0           # frames since the start
         self._part_voiced = 0
-        self._dict_max = int(300 / self.frame_sec)
-        self._dict_pause_frames = int(3.0 / self.frame_sec)     # by voice: a 3 s silence ends the dictation
-        self._dict_start_timeout = int(8.0 / self.frame_sec)
+        # Hands-free dictation ends only after a pause in speech (no voice, not just no sound), counted from the
+        # last word: never while the user is talking, however long. The cap is a safety net against a stuck VAD.
+        self._dict_max = int(3600 / self.frame_sec)
+        self._dict_pause_frames = int(10.0 / self.frame_sec)
+        self._dict_start_timeout = int(10.0 / self.frame_sec)    # nothing said since the start (or the tap)
         self._part_pause_frames = int(0.7 / self.frame_sec)     # a pause between sentences
         self._part_max = int(20 / self.frame_sec)               # a long run-on sentence is cut anyway
         self._part_lead = int(0.3 / self.frame_sec)             # silence kept before the first word of a part
@@ -145,11 +147,13 @@ class ListenerCore:
             if not resume:
                 self.pre_roll.clear()  # it may hold Jarvis's own voice from the speakers
 
-    def start_dictation(self, until_pause: bool, pause_sec: float = 3.0) -> None:
-        """until_pause=False: record until stop_dictation() (hotkey held); True: stop after a pause (voice)."""
+    def start_dictation(self, until_pause: bool, pause_sec: float = 10.0) -> None:
+        """until_pause=False: record until stop_dictation() (hotkey held); True: hands-free, it ends after
+        pause_sec without speech (after the last word, or from the start if nothing is said)."""
         with self._lock:
             self.mode = Mode.DICTATE
             self._dict_pause_frames = int(pause_sec / self.frame_sec)
+            self._dict_start_timeout = self._dict_pause_frames
             # The start cue has just played: the pre-roll would hold it, recording starts clean.
             self._dict_frames = []
             self._dict_until_pause = until_pause
@@ -164,10 +168,11 @@ class ListenerCore:
 
     def end_dictation_after_pause(self, seconds: float) -> None:
         """The hotkey was tapped, not held: dictation goes on hands-free and ends after this long a silence
-        (or on the next tap)."""
+        (or on the next tap). The pause is counted from the last word, so it never cuts the user off."""
         with self._lock:
             self._dict_until_pause = True
             self._dict_pause_frames = int(seconds / self.frame_sec)
+            self._dict_start_timeout = self._dict_total + self._dict_pause_frames
 
     def stop_dictation(self) -> None:
         with self._lock:

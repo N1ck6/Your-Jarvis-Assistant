@@ -25,6 +25,10 @@ wake_grace_ms = 2000
 max_utterance_sec = 15.0
 # How long to wait for a command after a bare "Джарвис".
 await_command_sec = 6.0
+# Dictation ends after this long without speech, counted from the last word (never while you speak):
+# "Джарвис, диктовка" by voice, and Ctrl+Alt+D tapped (not held; a second tap also ends it).
+dictation_pause_sec = 10.0
+dictation_hands_free_sec = 40.0
 pre_roll_ms = 400
 earcons = true
 earcon_volume = 0.25

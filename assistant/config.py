@@ -36,6 +36,8 @@ class AudioCfg(BaseModel):
     wake_grace_ms: int = 2000
     max_utterance_sec: float = 15.0
     await_command_sec: float = 6.0
+    dictation_pause_sec: float = 10.0        # "Джарвис, диктовка": ends this long after the last word
+    dictation_hands_free_sec: float = 40.0   # Ctrl+Alt+D tapped: ends this long after the last word (or on a tap)
     pre_roll_ms: int = 400
     earcons: bool = True
     earcon_volume: float = 0.25

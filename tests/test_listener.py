@@ -85,10 +85,42 @@ def test_interrupt_words(tts, phrase, word):
 def test_dictation_until_pause(tts):
     log = []
     core = make_core(log)
-    core.start_dictation(until_pause=True)
+    core.start_dictation(until_pause=True, pause_sec=3.0)
     run(core, np.concatenate([speech_16k(tts, "Привет, буду через десять минут, возьми хлеба по дороге."), pause(3.2)]))
     utt = [e for e in log if isinstance(e, tuple) and e[0] == "utt"]
     assert utt and utt[-1][1] == "dictation" and sum(u[2] for u in utt) > 2.0
+    assert core.mode is Mode.WAIT
+
+
+def feed(core, *chunks):
+    for chunk in chunks:
+        for i in range(0, len(chunk) - FRAME + 1, FRAME):
+            core.process(chunk[i:i + FRAME])
+
+
+def test_voice_dictation_waits_ten_seconds_after_the_last_word(tts):
+    """"Джарвис, диктовка": a paragraph with thinking pauses between sentences; it ends 10 s after the last word."""
+    log = []
+    core = make_core(log)
+    core.start_dictation(until_pause=True)                 # the default pause: 10 s
+    feed(core, pause(6.0), trimmed(tts, "Первое предложение."), pause(8.0), trimmed(tts, "Второе предложение."), pause(9.0))
+    assert core.mode is Mode.DICTATE
+    feed(core, pause(1.5))
+    assert core.mode is Mode.WAIT and log[-1][:2] == ("utt", "dictation")
+
+
+def test_hands_free_dictation_counts_the_pause_from_the_last_word(tts):
+    """Ctrl+Alt+D tapped: 40 s without speech ends it; a slow start or a long talk does not."""
+    log = []
+    core = make_core(log)
+    core.start_dictation(until_pause=False)
+    core.end_dictation_after_pause(40.0)
+    feed(core, pause(20.0), trimmed(tts, "Начинаю не сразу."), pause(35.0))
+    assert core.mode is Mode.DICTATE
+    core._dict_total = int(400 / core.frame_sec)          # long past the old 5-minute cap
+    feed(core, trimmed(tts, "И говорю долго."), pause(30.0))
+    assert core.mode is Mode.DICTATE
+    feed(core, pause(11.0))
     assert core.mode is Mode.WAIT
 
 

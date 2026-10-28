@@ -624,9 +624,10 @@ class Assistant:
             return None
 
     # ------------------------------------------------------------------ dictation
-    def start_dictation(self, until_pause: bool, paste: Callable[[str], None]) -> bool:
+    def start_dictation(self, until_pause: bool, paste: Callable[[str], None], pause_sec: float | None = None) -> bool:
         """Records speech and types it where the cursor is, phrase by phrase while the user speaks.
-        A start cue plays first; recording begins right after it. Hold-hotkey mode ends with stop_dictation()."""
+        A start cue plays first; recording begins right after it. Hold-hotkey mode ends with stop_dictation();
+        until_pause: hands-free, ends after pause_sec without speech (default: [audio] dictation_pause_sec)."""
         if not self.listener or not self.mic or self._dictating:
             return False
         self._muted_before_dictation = self.mic.paused
@@ -642,7 +643,7 @@ class Assistant:
 
         def begin() -> None:
             if self._dictating and self.listener:  # not released / cancelled during the cue
-                self.listener.start_dictation(until_pause)
+                self.listener.start_dictation(until_pause, pause_sec or self.cfg.audio.dictation_pause_sec)
                 self._set_state(State.LISTENING, "диктовка")
         asyncio.get_running_loop().call_later(cue.seconds + 0.04, begin)
         self._set_state(State.LISTENING, "диктовка")
@@ -664,13 +665,14 @@ class Assistant:
 
     def dictation_key_up(self, held_sec: float) -> None:
         """Held: release ends the dictation. Tapped: it goes on hands-free with text appearing as you speak,
-        until the next tap or 30 s of silence."""
+        until the next tap or [audio] dictation_hands_free_sec without speech after the last word."""
         if self._dict_key_stops or not self._dictating:
             return
         if held_sec < 0.45:
+            pause = self.cfg.audio.dictation_hands_free_sec
             if self.listener:
-                self.listener.end_dictation_after_pause(30.0)
-            log.info("Диктовка без удержания: до повторного нажатия или 30 с тишины")
+                self.listener.end_dictation_after_pause(pause)
+            log.info("Диктовка без удержания: до повторного нажатия или %.0f с без речи", pause)
             return
         self.stop_dictation()
 

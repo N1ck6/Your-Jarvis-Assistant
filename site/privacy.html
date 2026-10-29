@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Конфиденциальность Джарвиса</title>
+<meta name="description" content="Какие данные Джарвис хранит на вашем компьютере и что может уйти в интернет.">
+<link rel="canonical" href="https://n1ck6.github.io/Your-Jarvis-Assistant/privacy.html">
+<meta name="theme-color" content="#000000">
+<meta property="og:title" content="Конфиденциальность Джарвиса">
+<meta property="og:description" content="Какие данные Джарвис хранит на вашем компьютере и что может уйти в интернет.">
+<meta property="og:image" content="https://n1ck6.github.io/Your-Jarvis-Assistant/assets/og.png">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Перейти к содержимому</a>
+<header class="nav">
+  <div class="nav-bar">
+    <a class="brand" href="./"><img src="assets/favicon.svg" alt="" width="24" height="24">Джарвис</a>
+    <a class="btn btn-ghost btn-sm" href="./"><i class="ph ph-arrow-left"></i>На главную</a>
+  </div>
+</header>
+<main id="main" class="doc">
+  <div class="wrap">
+    <h1>Конфиденциальность</h1>
+    <p>Джарвис — программа на вашем компьютере, а не облачный сервис. У проекта нет своих серверов и аккаунтов, он не собирает статистику использования и не показывает рекламу.</p>
+
+    <h2>Что остаётся на компьютере</h2>
+    <ul>
+      <li>Звук с микрофона. Имя «Джарвис» и речь распознаются локально, записи не сохраняются.</li>
+      <li>Ответы локальной модели (Ollama) и голос Джарвиса.</li>
+      <li>Настройки, таймеры, заметки, списки, то, что вы попросили запомнить, и голосовой профиль. Всё это лежит в папке data внутри программы и удаляется вместе с ней.</li>
+      <li>Журнал работы в data/logs. Он помогает разобраться в сбоях и никуда не отправляется.</li>
+    </ul>
+
+    <h2>Что может уйти в интернет</h2>
+    <p>Только если вы сами добавили бесплатные ключи Groq или Gemini в настройках:</p>
+    <ul>
+      <li>текст вопроса о свежих событиях, новостях и курсах;</li>
+      <li>область экрана или выделенный текст, когда вы просите помочь с экраном или решить задачу;</li>
+      <li>текст страниц, на которых работает агент в браузере, чтобы составить план действий.</li>
+    </ul>
+    <p>Эти данные обрабатывают Groq и Google по своим правилам. Без ключей Джарвис работает полностью локально, кроме этих функций.</p>
+    <p>При установке install.bat скачивает программы и модели с официальных сайтов (Python, Ollama, Hugging Face). Погода и новости запрашиваются у публичных сервисов без ваших личных данных, кроме названия города из настроек. Раз в день Джарвис спрашивает у GitHub, вышла ли новая версия.</p>
+
+    <h2>Этот сайт</h2>
+    <p>Сайт размещён на GitHub Pages и не ставит cookies, не использует аналитику и счётчики. Шрифты загружаются с Google Fonts, значки с unpkg.com: эти сервисы видят адрес вашего браузера, как при любой загрузке файла. GitHub ведёт журналы посещений по своей <a href="https://docs.github.com/ru/site-policy/privacy-policies/github-general-privacy-statement">политике конфиденциальности</a>.</p>
+
+    <h2>Вопросы</h2>
+    <p>Код открыт: всё написанное выше можно проверить в <a href="https://github.com/N1ck6/Your-Jarvis-Assistant">репозитории</a>. Вопросы задавайте там же, в разделе Issues.</p>
+  </div>
+</main>
+<footer class="foot">
+  <div class="wrap">
+    <p>Джарвис. Голосовой ассистент для Windows.</p>
+    <nav aria-label="Ссылки внизу страницы">
+      <a href="./">Главная</a>
+      <a href="https://github.com/N1ck6/Your-Jarvis-Assistant">GitHub</a>
+      <a href="privacy.html" aria-current="page">Конфиденциальность</a>
+      <a href="https://github.com/N1ck6/Your-Jarvis-Assistant/blob/main/LICENSE.txt">Лицензия</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

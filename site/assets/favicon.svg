@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Jarvis: an arc reactor with an inverted triangle. Colors are recolored by state in assistant/ui/icons.py:
+       #2AA8E0 accent, #8FDCFF glow, #0B3A5C deep. -->
+  <defs>
+    <radialGradient id="disc" cx="50%" cy="45%" r="55%">
+      <stop offset="0" stop-color="#0B3A5C"/>
+      <stop offset="1" stop-color="#04101C"/>
+    </radialGradient>
+    <radialGradient id="core" cx="50%" cy="38%" r="62%">
+      <stop offset="0" stop-color="#8FDCFF"/>
+      <stop offset="0.55" stop-color="#2AA8E0"/>
+      <stop offset="1" stop-color="#0B3A5C"/>
+    </radialGradient>
+  </defs>
+  <circle cx="64" cy="64" r="62" fill="url(#disc)"/>
+  <circle cx="64" cy="64" r="58" fill="none" stroke="#2AA8E0" stroke-width="3"/>
+  <!-- segmented ring, a gap at the top like the reactor -->
+  <circle cx="64" cy="64" r="48" fill="none" stroke="#2AA8E0" stroke-width="10" opacity="0.85"
+          stroke-dasharray="8.6 3.4" transform="rotate(-84 64 64)"/>
+  <circle cx="64" cy="64" r="40" fill="none" stroke="#8FDCFF" stroke-width="2.5"/>
+  <circle cx="64" cy="64" r="37" fill="url(#core)"/>
+  <!-- the triangle -->
+  <path d="M30 45 H98 L64 100 Z" fill="#0B3A5C" stroke="#04101C" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M30 45 H98 L64 100 Z" fill="none" stroke="#8FDCFF" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M44 53 H84 L64 86 Z" fill="none" stroke="#8FDCFF" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M44 53 L64 65 L84 53 M64 65 V86" fill="none" stroke="#8FDCFF" stroke-width="3" stroke-linecap="round"/>
+</svg>

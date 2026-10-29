@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Джарвис: голосовой ассистент для Windows</title>
+<meta name="description" content="Бесплатный голосовой ассистент для Windows с голосом Джарвиса. Открывает программы, ставит таймеры, печатает под диктовку, решает задачи с экрана и работает в браузере. Речь распознаётся на вашем компьютере.">
+<link rel="canonical" href="https://n1ck6.github.io/Your-Jarvis-Assistant/">
+<meta name="theme-color" content="#000000">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:site_name" content="Джарвис">
+<meta property="og:title" content="Джарвис: ваш компьютер слушается с полуслова">
+<meta property="og:description" content="Голосовой ассистент для Windows. Бесплатно, с открытым кодом, речь распознаётся локально.">
+<meta property="og:url" content="https://n1ck6.github.io/Your-Jarvis-Assistant/">
+<meta property="og:image" content="https://n1ck6.github.io/Your-Jarvis-Assistant/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
+<link rel="stylesheet" href="assets/site.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Джарвис",
+  "operatingSystem": "Windows 10, Windows 11",
+  "applicationCategory": "UtilitiesApplication",
+  "description": "Голосовой ассистент для Windows с голосом Джарвиса. Речь распознаётся на компьютере.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" },
+  "license": "https://opensource.org/licenses/MIT",
+  "downloadUrl": "https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip",
+  "codeRepository": "https://github.com/N1ck6/Your-Jarvis-Assistant"
+}
+</script>
+<script type="application/ld+json" id="faq-schema"></script>
+</head>
+<body>
+<a class="skip" href="#main">Перейти к содержимому</a>
+
+<header class="nav" id="nav">
+  <div class="nav-bar">
+    <a class="brand" href="#top" aria-label="Джарвис, в начало страницы"><img src="assets/favicon.svg" alt="" width="24" height="24">Джарвис</a>
+    <ul class="nav-links">
+      <li><a href="#features">Возможности</a></li>
+      <li><a href="#commands">Команды</a></li>
+      <li><a href="#compare">Сравнение</a></li>
+      <li><a href="#faq">Вопросы</a></li>
+    </ul>
+    <a class="nav-gh" href="https://github.com/N1ck6/Your-Jarvis-Assistant" aria-label="Исходный код на GitHub"><i class="ph ph-github-logo"></i></a>
+    <a class="btn btn-primary btn-sm" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать</a>
+    <button class="menu-btn" type="button" aria-expanded="false" aria-controls="menu" aria-label="Открыть меню"><span></span><span></span></button>
+  </div>
+</header>
+<nav class="menu" id="menu" aria-label="Меню">
+  <a href="#features">Возможности</a>
+  <a href="#commands">Команды</a>
+  <a href="#install">Установка</a>
+  <a href="#compare">Сравнение</a>
+  <a href="#faq">Вопросы</a>
+  <a href="https://github.com/N1ck6/Your-Jarvis-Assistant">GitHub</a>
+  <a class="btn btn-primary" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
+</nav>
+
+<main id="main">
+  <!-- ============================================================ hero -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <div class="hero-copy">
+        <span class="eyebrow">Голосовой ассистент для Windows</span>
+        <h1><span class="line">Ваш компьютер</span><span class="line">слушается с полуслова</span></h1>
+        <p class="lead">Скажите «Джарвис» и что нужно. Он откроет программу, поставит таймер, напечатает под диктовку или решит задачу с экрана и ответит голосом Джарвиса. Речь распознаётся прямо на вашем компьютере.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
+          <div class="proof">
+            <span><i class="ph-fill ph-check-circle"></i>Бесплатно, без регистрации</span>
+            <span><i class="ph-fill ph-check-circle"></i>Открытый код</span>
+            <span><i class="ph-fill ph-check-circle"></i>Windows 10 и 11</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="console reveal" id="console" aria-label="Пример разговора с Джарвисом">
+        <div class="stage">
+          <span class="state" data-s="idle" aria-live="polite"><b></b><span id="state-text">Жду «Джарвис»</span></span>
+          <button class="sound" type="button" aria-pressed="false" id="sound"><i class="ph ph-speaker-slash"></i><span>Включить голос</span></button>
+          <canvas class="orb" id="orb" width="280" height="280" aria-hidden="true"></canvas>
+        </div>
+        <div class="log">
+          <div class="msg">
+            <span class="who">Вы</span>
+            <p class="said" id="said"></p>
+          </div>
+          <ul class="steps" id="steps">
+            <li><i class="ph ph-ear"></i>Услышал имя</li>
+            <li><i class="ph ph-text-t"></i>Распознал речь</li>
+            <li><i class="ph ph-lightbulb"></i>Понял</li>
+            <li><i class="ph ph-check"></i>Сделал</li>
+          </ul>
+          <div class="msg">
+            <span class="who">Джарвис</span>
+            <p class="reply" id="reply"></p>
+          </div>
+          <span class="done" id="done"><i class="ph-fill ph-check-circle"></i><span></span></span>
+        </div>
+        <div class="picker" role="group" aria-label="Выберите команду">
+          <span>Выберите команду или просто смотрите</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ stats -->
+  <section class="section" aria-label="Цифры">
+    <div class="wrap reveal">
+      <div class="stats">
+        <div class="stat"><b class="mono" data-count="97">97<small>%</small></b><p>слов «Джарвис» он слышит с первого раза</p></div>
+        <div class="stat"><b class="mono">0</b><p>ложных срабатываний за 35 минут похожей речи</p></div>
+        <div class="stat"><b class="mono">0,34<small>с</small></b><p>чтобы понять свободную фразу, точность 94%</p></div>
+        <div class="stat"><b class="mono">0,1<small>с</small></b><p>на фразу голосом Джарвиса, на обычном процессоре</p></div>
+      </div>
+      <p class="note">Замеры версии MVP. Каждая команда проверяется 678 автотестами.</p>
+    </div>
+  </section>
+
+  <!-- ============================================================ problem -->
+  <section class="section" aria-labelledby="problem-title">
+    <div class="wrap">
+      <div class="head center reveal">
+        <span class="eyebrow">Зачем он нужен</span>
+        <h2 class="h2" id="problem-title">Обычные ассистенты отвечают.<br>Джарвис делает.</h2>
+        <p class="lead">Большинство голосовых помощников объясняют, где нажать. Джарвис нажимает сам, и вам не нужно отрываться от дела.</p>
+      </div>
+      <div class="versus">
+        <div class="vs-card reveal">
+          <span class="vs-label"><i class="ph ph-cloud"></i>Типичный облачный помощник</span>
+          <p class="bubble you">Поставь таймер на 15 минут и включи музыку</p>
+          <p class="bubble them">Чтобы поставить таймер в Windows, откройте приложение «Часы», выберите вкладку «Таймер» и нажмите «Добавить»…</p>
+          <div class="ticks"><span class="tick no"><i class="ph ph-x"></i>Таймер</span><span class="tick no"><i class="ph ph-x"></i>Музыка</span><span class="tick no"><i class="ph ph-cloud-arrow-up"></i>Голос ушёл на сервер</span></div>
+        </div>
+        <div class="vs-card good reveal">
+          <span class="vs-label"><img src="assets/favicon.svg" alt="" width="20" height="20">Джарвис</span>
+          <p class="bubble you">Поставь таймер на 15 минут и включи музыку</p>
+          <p class="bubble them">Таймер на 15 минут. Включаю музыку.</p>
+          <div class="ticks"><span class="tick"><i class="ph ph-check"></i>Таймер</span><span class="tick"><i class="ph ph-check"></i>Музыка</span><span class="tick"><i class="ph ph-house"></i>Голос остался на компьютере</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ benefits -->
+  <section class="section" id="features" aria-labelledby="features-title">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Возможности</span>
+        <h2 class="h2" id="features-title">Пять вещей, ради которых<br>его ставят</h2>
+      </div>
+      <div class="bento">
+        <article class="card span2 reveal">
+          <div class="card-text">
+            <h3><i class="ph ph-math-operations"></i>Решает задачи с экрана</h3>
+            <p><b>Выделите задачу мышью или продиктуйте её.</b> Через пару секунд рядом появятся два окна: короткое решение и голый ответ. Без воды, скобок и разметки, можно сразу переписать в тетрадь.</p>
+          </div>
+          <div class="viz" id="solve-viz">
+            <div class="solve">
+              <div class="paper"><small>Задание 4</small><span class="task">Найдите x: 3x + 7 = 25</span><span class="sel"></span></div>
+              <div class="wins">
+                <div class="win solution"><header>Решение <i class="ph ph-push-pin"></i></header><div>3x = 25 − 7 = 18<br>x = 18 : 3 = 6</div></div>
+                <div class="win answer"><header>Ответ <i class="ph ph-push-pin"></i></header><div>6</div></div>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card reveal">
+          <div class="card-text">
+            <h3><i class="ph ph-keyboard"></i>Диктовка там, где курсор</h3>
+            <p><b>Ctrl+Alt+D или «Джарвис, диктовка».</b> Текст печатается по фразам в любой программе. Закончили говорить, и через 40 секунд тишины диктовка выключится сама.</p>
+          </div>
+          <div class="viz editor" id="dict-viz">
+            <div class="bar"><span class="rec"></span>Диктовка<span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>D</kbd></span></div>
+            <p id="dict-text"><span class="caret"></span></p>
+          </div>
+        </article>
+
+        <article class="card reveal">
+          <div class="card-text">
+            <h3><i class="ph ph-browser"></i>Агент в вашем браузере</h3>
+            <p><b>«Найди на Озоне наушники до 3000 с хорошими отзывами».</b> Он ищет в вашем браузере, с вашими аккаунтами, и оставляет карточку со ссылками. Заказ только после вашего «да».</p>
+          </div>
+          <div class="viz" id="agent-viz">
+            <ul class="agent">
+              <li><i class="ph-fill ph-check-circle"></i>Открыл Озон в отдельной вкладке</li>
+              <li><i class="ph-fill ph-check-circle"></i>Цена до 3 000 ₽</li>
+              <li><i class="ph-fill ph-check-circle"></i>Сортировка по отзывам</li>
+              <li><i class="ph-fill ph-check-circle"></i>Три варианта на карточке</li>
+            </ul>
+            <div class="confirm"><i class="ph ph-hand"></i>Оформить заказ? Скажите «да»</div>
+          </div>
+        </article>
+
+        <article class="card reveal">
+          <div class="card-text">
+            <h3><i class="ph ph-lock-simple"></i>Голос остаётся дома</h3>
+            <p><b>Имя, речь и большинство ответов обрабатываются на вашем компьютере.</b> В интернет уходит только текст вопроса о свежих новостях, и только если вы добавили ключ.</p>
+          </div>
+          <div class="viz local">
+            <div><span>Слышит имя</span><b><i class="ph ph-house"></i>на компьютере</b></div>
+            <div><span>Речь в текст</span><b><i class="ph ph-house"></i>на компьютере</b></div>
+            <div><span>Понимание и ответы</span><b><i class="ph ph-house"></i>на компьютере</b></div>
+            <div class="cloud"><span>Свежие новости</span><b><i class="ph ph-cloud"></i>по желанию</b></div>
+          </div>
+        </article>
+
+        <article class="card reveal">
+          <div class="card-text">
+            <h3><i class="ph ph-puzzle-piece"></i>Учится новым навыкам</h3>
+            <p><b>Навык — это просто папка:</b> описание, фразы и код. Положите её в data/skills, и Джарвис подхватит её за пару секунд, без перезапуска.</p>
+          </div>
+          <div class="viz">
+            <div class="tree">
+              <div><i class="ph ph-folder-open"></i>data/skills</div>
+              <div class="in1 new"><i class="ph ph-folder-open"></i>pomodoro</div>
+              <div class="in1" style="padding-left:48px"><i class="ph ph-file"></i>skill.toml</div>
+              <div class="in1" style="padding-left:48px"><i class="ph ph-file"></i>commands.toml</div>
+              <div class="in1" style="padding-left:48px"><i class="ph ph-file-code"></i>main.py</div>
+            </div>
+            <span class="loaded"><i class="ph-fill ph-check-circle"></i>Навык подключён, перезапуск не нужен</span>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ tagline -->
+  <section class="tagline" aria-label="Главное">
+    <div class="wrap">
+      <p id="tagline"><span class="l">Вы говорите, что нужно.</span><span class="l">Джарвис слышит, понимает</span><span class="l" data-accent>и делает за доли секунды.</span></p>
+    </div>
+  </section>
+
+  <!-- ============================================================ commands -->
+  <section class="section" id="commands" aria-labelledby="commands-title">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Команды</span>
+        <h2 class="h2" id="commands-title">Говорите своими словами</h2>
+        <p class="lead">Готовые команды срабатывают мгновенно. Если фраза новая, её разберёт локальная модель и запомнит на будущее. Нажмите на карточку со значком, чтобы услышать ответ.</p>
+      </div>
+      <div class="tabs reveal" role="tablist" aria-label="Области" id="tabs"></div>
+      <div id="panels"></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ how it works -->
+  <section class="section" id="install" aria-labelledby="install-title">
+    <div class="wrap">
+      <div class="head center reveal">
+        <span class="eyebrow">Установка</span>
+        <h2 class="h2" id="install-title">Три шага до первого «Да, сэр»</h2>
+      </div>
+      <ol class="how">
+        <li class="reveal"><span class="n">1</span><h3>Скачайте архив</h3><p>Кнопка «Скачать» берёт свежую версию с GitHub. Распакуйте архив в любую папку.</p></li>
+        <li class="reveal"><span class="n">2</span><h3>Запустите <code>install.bat</code></h3><p>Он сам поставит Python, Ollama и модели речи. Займёт от 15 до 40 минут, прерванная установка продолжится с того же места.</p></li>
+        <li class="reveal"><span class="n">3</span><h3>Скажите «Джарвис»</h3><p>Запустите <code>run.bat</code>. Значок появится в трее, а Джарвис поздоровается и будет ждать команду.</p></li>
+      </ol>
+      <div class="pipe reveal" aria-label="Что происходит после слова «Джарвис»">
+        <span><i class="ph ph-microphone"></i>Микрофон</span><i class="ph ph-caret-right"></i>
+        <span><i class="ph ph-ear"></i>«Джарвис»</span><i class="ph ph-caret-right"></i>
+        <span><i class="ph ph-text-t"></i>Речь в текст</span><i class="ph ph-caret-right"></i>
+        <span><i class="ph ph-lightbulb"></i>Понимание</span><i class="ph ph-caret-right"></i>
+        <span><i class="ph ph-lightning"></i>Действие</span><i class="ph ph-caret-right"></i>
+        <span><i class="ph ph-speaker-high"></i>Ответ голосом</span>
+      </div>
+      <div class="req reveal">
+        <span><i class="ph ph-windows-logo"></i>Windows 10 или 11, 64 бит</span>
+        <span><i class="ph ph-memory"></i>16 ГБ памяти (8 ГБ без локальной модели)</span>
+        <span><i class="ph ph-hard-drives"></i>около 15 ГБ на диске</span>
+        <span><i class="ph ph-cpu"></i>видеокарта не обязательна</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ comparison -->
+  <section class="section" id="compare" aria-labelledby="compare-title">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Сравнение</span>
+        <h2 class="h2" id="compare-title">Чем он лучше облачных помощников</h2>
+      </div>
+      <div class="compare reveal">
+        <table>
+          <thead><tr><th scope="col">Что важно</th><th scope="col" class="us">Джарвис</th><th scope="col">Облачный помощник</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Где распознаётся речь</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>На вашем компьютере</td><td data-l="Облачный"><i class="ph-fill ph-x-circle x"></i>На сервере компании</td></tr>
+            <tr><th scope="row">Команды без интернета</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>Работают</td><td data-l="Облачный"><i class="ph-fill ph-x-circle x"></i>Не работают</td></tr>
+            <tr><th scope="row">Окна, громкость, программы, питание</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>Голосом, без мыши</td><td data-l="Облачный"><i class="ph-fill ph-minus-circle m"></i>Частично</td></tr>
+            <tr><th scope="row">Диктовка в любую программу</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>По фразам, где курсор</td><td data-l="Облачный"><i class="ph-fill ph-minus-circle m"></i>Обычно только в своём окне</td></tr>
+            <tr><th scope="row">Задача с экрана</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>Решение и ответ в двух окнах</td><td data-l="Облачный"><i class="ph-fill ph-minus-circle m"></i>Длинный ответ в чате</td></tr>
+            <tr><th scope="row">Задачи на сайтах с вашими аккаунтами</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>Покупки только после «да»</td><td data-l="Облачный"><i class="ph-fill ph-x-circle x"></i>Редко</td></tr>
+            <tr><th scope="row">Свои команды и навыки</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>Папкой, без перезапуска</td><td data-l="Облачный"><i class="ph-fill ph-x-circle x"></i>Нельзя</td></tr>
+            <tr><th scope="row">Цена</th><td class="us" data-l="Джарвис"><i class="ph-fill ph-check-circle y"></i>Бесплатно, открытый код</td><td data-l="Облачный"><i class="ph-fill ph-minus-circle m"></i>Аккаунт, часто подписка</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ safety -->
+  <section class="section" aria-labelledby="safe-title">
+    <div class="wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Безопасность</span>
+        <h2 class="h2" id="safe-title">Руки в браузере,<br>но под вашим контролем</h2>
+        <p class="lead">Агент работает в отдельной вкладке рядом с вашей. Щёлкните по ней, и увидите, что он нажимает и зачем.</p>
+      </div>
+      <div class="safe">
+        <div class="a reveal"><h3><i class="ph-fill ph-check-circle"></i>Делает сам</h3><ul><li>Ищет, читает и сравнивает</li><li>Фильтры и сортировка</li><li>Корзина и избранное</li><li>Включает видео</li></ul></div>
+        <div class="b reveal"><h3><i class="ph-fill ph-hand"></i>Только после «да»</h3><ul><li>Заказ и оплата сохранённой картой</li><li>Отправка форм, сообщений и отзывов</li><li>Подписки и удаление</li><li>Настройки аккаунта</li></ul></div>
+        <div class="c reveal"><h3><i class="ph-fill ph-prohibit"></i>Никогда</h3><ul><li>Пароли и коды из СМС</li><li>Данные карт и паспорта</li><li>Банки, Госуслуги, переводы денег</li><li>Капча и принятие условий</li></ul></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ faq -->
+  <section class="section" id="faq" aria-labelledby="faq-title">
+    <div class="wrap faq-wrap">
+      <div class="head reveal">
+        <span class="eyebrow">Вопросы</span>
+        <h2 class="h2" id="faq-title">Частые вопросы</h2>
+        <p class="lead">Не нашли ответ? Задайте вопрос на <a href="https://github.com/N1ck6/Your-Jarvis-Assistant/issues">GitHub</a>.</p>
+      </div>
+      <div class="faq reveal" id="faq-list">
+        <details><summary>Сколько это стоит?<i class="ph ph-plus"></i></summary><div class="a"><p>Нисколько. Код открыт под лицензией MIT, подписок и регистрации нет. Ключи Groq и Gemini для свежих новостей тоже бесплатные и нужны не всем.</p></div></details>
+        <details><summary>Нужен ли интернет?<i class="ph ph-plus"></i></summary><div class="a"><p>Только для установки. Дальше команды, таймеры, диктовка, музыка и ответы локальной модели работают без сети.</p><p>Интернет нужен для свежих новостей, курсов валют и агента в браузере. Из России для Groq и Gemini понадобится VPN.</p></div></details>
+        <details><summary>Какой компьютер нужен?<i class="ph ph-plus"></i></summary><div class="a"><p>Windows 10 или 11 (64 бит), микрофон, 16 ГБ памяти и около 15 ГБ на диске. Без локальной модели хватит 8 ГБ памяти.</p><p>Видеокарта не обязательна: голос Джарвиса работает на процессоре. NVIDIA от 6 ГБ ускоряет ответы модели.</p></div></details>
+        <details><summary>Куда уходит мой голос?<i class="ph ph-plus"></i></summary><div class="a"><p>Никуда. Имя «Джарвис» и речь распознаются на вашем компьютере. В интернет уходит только текст вопроса о свежих событиях, и только если вы добавили ключ. Статистику использования Джарвис не собирает.</p></div></details>
+        <details><summary>Сколько длится установка?<i class="ph ph-plus"></i></summary><div class="a"><p>Скачайте архив и запустите install.bat. Он сам поставит Python, Ollama и модели, это от 15 до 40 минут в зависимости от скорости интернета. Если установка прервётся, запустите её ещё раз: скачанное не потеряется.</p></div></details>
+        <details><summary>Агент в браузере может купить без меня?<i class="ph ph-plus"></i></summary><div class="a"><p>Нет. Он сам ищет, сравнивает и кладёт в корзину, а заказ, оплату, отправку сообщений и удаление выполняет только после вашего «да». Пароли, коды из СМС, данные карт, банки и Госуслуги он не трогает никогда.</p></div></details>
+        <details><summary>Можно перебить Джарвиса?<i class="ph ph-plus"></i></summary><div class="a"><p>Да, в любой момент. Скажите «стоп» или сразу новую команду: эхоподавление убирает его голос из микрофона, а пока вы говорите, он становится тише. «Не то» отменяет последнее действие, «верни как было» откатывает изменение.</p></div></details>
+        <details><summary>Он откликается на чужие голоса?<i class="ph ph-plus"></i></summary><div class="a"><p>Скажите «запомни мой голос», и Джарвис будет реагировать только на вас. А без слова «Джарвис» он не срабатывает: на 35 минутах похожей речи не было ни одного ложного включения.</p></div></details>
+        <details><summary>Как научить его новому?<i class="ph ph-plus"></i></summary><div class="a"><p>Простые сценарии «фраза и список действий» настраиваются из меню в трее. Для большего есть навыки: папка с описанием, фразами и кодом в data/skills. Джарвис подхватывает её за пару секунд, без перезапуска.</p></div></details>
+        <details><summary>Как удалить Джарвиса?<i class="ph ph-plus"></i></summary><div class="a"><p>Удалите папку с программой и модели Ollama. Ничего не прописывается в систему, кроме кэша моделей речи в папке пользователя.</p></div></details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ final -->
+  <section class="section" aria-labelledby="final-title">
+    <div class="wrap">
+      <div class="final reveal">
+        <img src="assets/favicon.svg" alt="" width="64" height="64">
+        <h2 class="h2" id="final-title">Скажите «Джарвис»<br>уже сегодня</h2>
+        <p class="lead">Установка займёт меньше часа, а первая команда меньше секунды.</p>
+        <a class="btn btn-primary" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
+        <div class="risk">
+          <span><i class="ph-fill ph-check-circle"></i>Бесплатно, лицензия MIT</span>
+          <span><i class="ph-fill ph-check-circle"></i>Без аккаунта и подписки</span>
+          <span><i class="ph-fill ph-check-circle"></i>Удаляется вместе с папкой</span>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p>Джарвис. Голосовой ассистент для Windows. Код под лицензией MIT. Голос «Джарвис Lite» обучен на репликах проекта Priler/jarvis, CC BY NC SA 4.0.</p>
+    <nav aria-label="Ссылки внизу страницы">
+      <a href="https://github.com/N1ck6/Your-Jarvis-Assistant">GitHub</a>
+      <a href="https://github.com/N1ck6/Your-Jarvis-Assistant/blob/main/COMMANDS.md">Все команды</a>
+      <a href="privacy.html">Конфиденциальность</a>
+      <a href="https://github.com/N1ck6/Your-Jarvis-Assistant/blob/main/LICENSE.txt">Лицензия</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="assets/site.js" defer></script>
+</body>
+</html>

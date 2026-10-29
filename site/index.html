@@ -6,7 +6,7 @@
 <title>Джарвис: голосовой ассистент для Windows</title>
 <meta name="description" content="Бесплатный голосовой ассистент для Windows с голосом Джарвиса. Открывает программы, ставит таймеры, печатает под диктовку, решает задачи с экрана и работает в браузере. Речь распознаётся на вашем компьютере.">
 <link rel="canonical" href="https://n1ck6.github.io/Your-Jarvis-Assistant/">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#02060B">
 <meta property="og:type" content="website">
 <meta property="og:locale" content="ru_RU">
 <meta property="og:site_name" content="Джарвис">
@@ -20,10 +20,11 @@
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
 <link rel="stylesheet" href="assets/site.css">
+<script>try { if (sessionStorage.getItem("booted")) document.documentElement.classList.add("booted"); } catch (_) {}</script>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -43,11 +44,36 @@
 <body>
 <a class="skip" href="#main">Перейти к содержимому</a>
 
+<!-- the living background and the HUD frame -->
+<canvas id="bg-gl" aria-hidden="true"></canvas>
+<canvas id="bg-fx" aria-hidden="true"></canvas>
+<div class="scan" aria-hidden="true"></div>
+<div class="hud" aria-hidden="true">
+  <i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>
+  <div class="hud-sec"><b id="hud-num">01</b><span>/ <span id="hud-total">10</span></span><em id="hud-name">Старт</em></div>
+  <div class="hud-bar"><i id="hud-fill"></i><span id="hud-pct">0%</span></div>
+  <div class="hud-bl"><b class="live"></b>SYS ONLINE<span id="hud-xy">X 0000 · Y 0000</span></div>
+  <div class="hud-br" id="hud-clock">00:00:00</div>
+</div>
+<div class="progress" aria-hidden="true"><i id="progress"></i></div>
+<div class="cursor" aria-hidden="true"><i></i></div>
+
+<!-- start: a short system boot, once per visit -->
+<div class="boot" aria-hidden="true">
+  <div class="boot-half top"></div><div class="boot-half bottom"></div>
+  <div class="boot-core">
+    <img src="assets/favicon.svg" alt="" width="72" height="72">
+    <pre class="boot-log" id="boot-log"></pre>
+    <div class="boot-bar"><i id="boot-fill"></i></div>
+  </div>
+</div>
+
 <header class="nav" id="nav">
   <div class="nav-bar">
     <a class="brand" href="#top" aria-label="Джарвис, в начало страницы"><img src="assets/favicon.svg" alt="" width="24" height="24">Джарвис</a>
     <ul class="nav-links">
       <li><a href="#features">Возможности</a></li>
+      <li><a href="#inside">Как работает</a></li>
       <li><a href="#commands">Команды</a></li>
       <li><a href="#compare">Сравнение</a></li>
       <li><a href="#faq">Вопросы</a></li>
@@ -59,24 +85,27 @@
 </header>
 <nav class="menu" id="menu" aria-label="Меню">
   <a href="#features">Возможности</a>
+  <a href="#inside">Как работает</a>
   <a href="#commands">Команды</a>
   <a href="#install">Установка</a>
   <a href="#compare">Сравнение</a>
   <a href="#faq">Вопросы</a>
-  <a href="https://github.com/N1ck6/Your-Jarvis-Assistant">GitHub</a>
   <a class="btn btn-primary" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
 </nav>
 
 <main id="main">
   <!-- ============================================================ hero -->
-  <section class="hero" id="top">
+  <section class="hero" id="top" data-hud="Старт">
     <div class="wrap">
       <div class="hero-copy">
-        <span class="eyebrow">Голосовой ассистент для Windows</span>
-        <h1><span class="line">Ваш компьютер</span><span class="line">слушается с полуслова</span></h1>
-        <p class="lead">Скажите «Джарвис» и что нужно. Он откроет программу, поставит таймер, напечатает под диктовку или решит задачу с экрана и ответит голосом Джарвиса. Речь распознаётся прямо на вашем компьютере.</p>
+        <span class="eyebrow mono" data-scramble>J.A.R.V.I.S. // <span class="long">Голосовой </span>ассистент для Windows</span>
+        <h1 aria-label="Ваш компьютер слушается с полуслова">
+          <span class="mask"><span class="line" data-drift="-1">Ваш компьютер</span></span>
+          <span class="mask"><span class="line accent" data-drift="1">слушается с полуслова</span></span>
+        </h1>
+        <p class="lead hero-lead">Скажите «Джарвис» и что нужно. Он откроет программу, поставит таймер, напечатает под диктовку или решит задачу с экрана и ответит голосом Джарвиса. Речь распознаётся прямо на вашем компьютере.</p>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
+          <a class="btn btn-primary btn-lg magnetic" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
           <div class="proof">
             <span><i class="ph-fill ph-check-circle"></i>Бесплатно, без регистрации</span>
             <span><i class="ph-fill ph-check-circle"></i>Открытый код</span>
@@ -85,66 +114,70 @@
         </div>
       </div>
 
-      <div class="console reveal" id="console" aria-label="Пример разговора с Джарвисом">
-        <div class="stage">
-          <span class="state" data-s="idle" aria-live="polite"><b></b><span id="state-text">Жду «Джарвис»</span></span>
-          <button class="sound" type="button" aria-pressed="false" id="sound"><i class="ph ph-speaker-slash"></i><span>Включить голос</span></button>
-          <canvas class="orb" id="orb" width="280" height="280" aria-hidden="true"></canvas>
-        </div>
-        <div class="log">
-          <div class="msg">
-            <span class="who">Вы</span>
-            <p class="said" id="said"></p>
+      <div class="console-3d" id="console-3d">
+        <div class="console glass frame" id="console" aria-label="Пример разговора с Джарвисом">
+          <div class="stage">
+            <span class="state" data-s="idle" aria-live="polite"><b></b><span id="state-text">Жду «Джарвис»</span></span>
+            <button class="sound" type="button" aria-pressed="false" id="sound"><i class="ph ph-speaker-slash"></i><span>Включить голос</span></button>
+            <canvas class="orb" id="orb" width="280" height="280" aria-hidden="true"></canvas>
+            <span class="stage-tag mono">CORE · 0x4A</span>
           </div>
-          <ul class="steps" id="steps">
-            <li><i class="ph ph-ear"></i>Услышал имя</li>
-            <li><i class="ph ph-text-t"></i>Распознал речь</li>
-            <li><i class="ph ph-lightbulb"></i>Понял</li>
-            <li><i class="ph ph-check"></i>Сделал</li>
-          </ul>
-          <div class="msg">
-            <span class="who">Джарвис</span>
-            <p class="reply" id="reply"></p>
+          <div class="log">
+            <div class="msg">
+              <span class="who mono">Вы</span>
+              <p class="said" id="said"></p>
+            </div>
+            <ul class="steps" id="steps">
+              <li><i class="ph ph-ear"></i>Услышал имя</li>
+              <li><i class="ph ph-text-t"></i>Распознал речь</li>
+              <li><i class="ph ph-lightbulb"></i>Понял</li>
+              <li><i class="ph ph-check"></i>Сделал</li>
+            </ul>
+            <div class="msg">
+              <span class="who mono">Джарвис</span>
+              <p class="reply" id="reply"></p>
+            </div>
+            <span class="done" id="done"><i class="ph-fill ph-check-circle"></i><span></span></span>
           </div>
-          <span class="done" id="done"><i class="ph-fill ph-check-circle"></i><span></span></span>
-        </div>
-        <div class="picker" role="group" aria-label="Выберите команду">
-          <span>Выберите команду или просто смотрите</span>
+          <div class="picker" role="group" aria-label="Выберите команду">
+            <span class="mono">Выберите команду или просто смотрите</span>
+          </div>
         </div>
       </div>
     </div>
   </section>
 
   <!-- ============================================================ stats -->
-  <section class="section" aria-label="Цифры">
-    <div class="wrap reveal">
+  <section class="section" aria-label="Цифры" data-hud="Цифры">
+    <div class="wrap">
       <div class="stats">
-        <div class="stat"><b class="mono" data-count="97">97<small>%</small></b><p>слов «Джарвис» он слышит с первого раза</p></div>
-        <div class="stat"><b class="mono">0</b><p>ложных срабатываний за 35 минут похожей речи</p></div>
-        <div class="stat"><b class="mono">0,34<small>с</small></b><p>чтобы понять свободную фразу, точность 94%</p></div>
-        <div class="stat"><b class="mono">0,1<small>с</small></b><p>на фразу голосом Джарвиса, на обычном процессоре</p></div>
+        <div class="stat glass frame reveal"><b class="num" data-to="97" data-suffix="%">0</b><p>слов «Джарвис» он слышит с первого раза</p></div>
+        <div class="stat glass frame reveal"><b class="num" data-to="0">0</b><p>ложных срабатываний за 35 минут похожей речи</p></div>
+        <div class="stat glass frame reveal"><b class="num" data-to="0.34" data-dec="2" data-suffix="с">0</b><p>чтобы понять свободную фразу, точность 94%</p></div>
+        <div class="stat glass frame reveal"><b class="num" data-to="0.1" data-dec="1" data-suffix="с">0</b><p>на фразу голосом Джарвиса, на обычном процессоре</p></div>
       </div>
-      <p class="note">Замеры версии MVP. Каждая команда проверяется 678 автотестами.</p>
+      <p class="note mono reveal">Замеры версии MVP · 678 автотестов на каждую сборку</p>
     </div>
   </section>
 
   <!-- ============================================================ problem -->
-  <section class="section" aria-labelledby="problem-title">
+  <section class="section" id="why" aria-labelledby="problem-title" data-hud="Зачем">
+    <span class="ghost" data-speed="-0.25" aria-hidden="true">02</span>
     <div class="wrap">
       <div class="head center reveal">
-        <span class="eyebrow">Зачем он нужен</span>
-        <h2 class="h2" id="problem-title">Обычные ассистенты отвечают.<br>Джарвис делает.</h2>
+        <span class="eyebrow mono" data-scramble>02 // Зачем он нужен</span>
+        <h2 class="h2" id="problem-title" data-scramble>Обычные ассистенты отвечают.<br>Джарвис делает.</h2>
         <p class="lead">Большинство голосовых помощников объясняют, где нажать. Джарвис нажимает сам, и вам не нужно отрываться от дела.</p>
       </div>
       <div class="versus">
-        <div class="vs-card reveal">
-          <span class="vs-label"><i class="ph ph-cloud"></i>Типичный облачный помощник</span>
+        <div class="vs-card glass reveal from-left">
+          <span class="vs-label mono"><i class="ph ph-cloud"></i>Типичный облачный помощник</span>
           <p class="bubble you">Поставь таймер на 15 минут и включи музыку</p>
           <p class="bubble them">Чтобы поставить таймер в Windows, откройте приложение «Часы», выберите вкладку «Таймер» и нажмите «Добавить»…</p>
           <div class="ticks"><span class="tick no"><i class="ph ph-x"></i>Таймер</span><span class="tick no"><i class="ph ph-x"></i>Музыка</span><span class="tick no"><i class="ph ph-cloud-arrow-up"></i>Голос ушёл на сервер</span></div>
         </div>
-        <div class="vs-card good reveal">
-          <span class="vs-label"><img src="assets/favicon.svg" alt="" width="20" height="20">Джарвис</span>
+        <div class="vs-card glass good frame reveal from-right">
+          <span class="vs-label mono"><img src="assets/favicon.svg" alt="" width="20" height="20">Джарвис</span>
           <p class="bubble you">Поставь таймер на 15 минут и включи музыку</p>
           <p class="bubble them">Таймер на 15 минут. Включаю музыку.</p>
           <div class="ticks"><span class="tick"><i class="ph ph-check"></i>Таймер</span><span class="tick"><i class="ph ph-check"></i>Музыка</span><span class="tick"><i class="ph ph-house"></i>Голос остался на компьютере</span></div>
@@ -154,14 +187,15 @@
   </section>
 
   <!-- ============================================================ benefits -->
-  <section class="section" id="features" aria-labelledby="features-title">
+  <section class="section" id="features" aria-labelledby="features-title" data-hud="Возможности">
+    <span class="ghost right" data-speed="-0.2" aria-hidden="true">03</span>
     <div class="wrap">
       <div class="head reveal">
-        <span class="eyebrow">Возможности</span>
-        <h2 class="h2" id="features-title">Пять вещей, ради которых<br>его ставят</h2>
+        <span class="eyebrow mono" data-scramble>03 // Возможности</span>
+        <h2 class="h2" id="features-title" data-scramble>Пять вещей, ради которых<br>его ставят</h2>
       </div>
       <div class="bento">
-        <article class="card span2 reveal">
+        <article class="card glass tilt span2 reveal">
           <div class="card-text">
             <h3><i class="ph ph-math-operations"></i>Решает задачи с экрана</h3>
             <p><b>Выделите задачу мышью или продиктуйте её.</b> Через пару секунд рядом появятся два окна: короткое решение и голый ответ. Без воды, скобок и разметки, можно сразу переписать в тетрадь.</p>
@@ -177,18 +211,18 @@
           </div>
         </article>
 
-        <article class="card reveal">
+        <article class="card glass tilt reveal">
           <div class="card-text">
             <h3><i class="ph ph-keyboard"></i>Диктовка там, где курсор</h3>
             <p><b>Ctrl+Alt+D или «Джарвис, диктовка».</b> Текст печатается по фразам в любой программе. Закончили говорить, и через 40 секунд тишины диктовка выключится сама.</p>
           </div>
           <div class="viz editor" id="dict-viz">
-            <div class="bar"><span class="rec"></span>Диктовка<span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>D</kbd></span></div>
+            <div class="bar mono"><span class="rec"></span>REC<span class="keys"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>D</kbd></span></div>
             <p id="dict-text"><span class="caret"></span></p>
           </div>
         </article>
 
-        <article class="card reveal">
+        <article class="card glass tilt reveal">
           <div class="card-text">
             <h3><i class="ph ph-browser"></i>Агент в вашем браузере</h3>
             <p><b>«Найди на Озоне наушники до 3000 с хорошими отзывами».</b> Он ищет в вашем браузере, с вашими аккаунтами, и оставляет карточку со ссылками. Заказ только после вашего «да».</p>
@@ -204,7 +238,7 @@
           </div>
         </article>
 
-        <article class="card reveal">
+        <article class="card glass tilt reveal">
           <div class="card-text">
             <h3><i class="ph ph-lock-simple"></i>Голос остаётся дома</h3>
             <p><b>Имя, речь и большинство ответов обрабатываются на вашем компьютере.</b> В интернет уходит только текст вопроса о свежих новостях, и только если вы добавили ключ.</p>
@@ -217,20 +251,20 @@
           </div>
         </article>
 
-        <article class="card reveal">
+        <article class="card glass tilt reveal">
           <div class="card-text">
             <h3><i class="ph ph-puzzle-piece"></i>Учится новым навыкам</h3>
             <p><b>Навык — это просто папка:</b> описание, фразы и код. Положите её в data/skills, и Джарвис подхватит её за пару секунд, без перезапуска.</p>
           </div>
           <div class="viz">
-            <div class="tree">
+            <div class="tree mono">
               <div><i class="ph ph-folder-open"></i>data/skills</div>
               <div class="in1 new"><i class="ph ph-folder-open"></i>pomodoro</div>
-              <div class="in1" style="padding-left:48px"><i class="ph ph-file"></i>skill.toml</div>
-              <div class="in1" style="padding-left:48px"><i class="ph ph-file"></i>commands.toml</div>
-              <div class="in1" style="padding-left:48px"><i class="ph ph-file-code"></i>main.py</div>
+              <div class="in2"><i class="ph ph-file"></i>skill.toml</div>
+              <div class="in2"><i class="ph ph-file"></i>commands.toml</div>
+              <div class="in2"><i class="ph ph-file-code"></i>main.py</div>
             </div>
-            <span class="loaded"><i class="ph-fill ph-check-circle"></i>Навык подключён, перезапуск не нужен</span>
+            <span class="loaded mono"><i class="ph-fill ph-check-circle"></i>Навык подключён, перезапуск не нужен</span>
           </div>
         </article>
       </div>
@@ -238,18 +272,54 @@
   </section>
 
   <!-- ============================================================ tagline -->
-  <section class="tagline" aria-label="Главное">
+  <section class="tagline" aria-label="Главное" data-hud="Суть">
     <div class="wrap">
       <p id="tagline"><span class="l">Вы говорите, что нужно.</span><span class="l">Джарвис слышит, понимает</span><span class="l" data-accent>и делает за доли секунды.</span></p>
     </div>
   </section>
 
+  <!-- ============================================================ marquee -->
+  <section class="marquee" aria-label="Примеры команд">
+    <div class="mq" data-dir="1"><div class="mq-track">
+      <span>«Открой телеграм»</span><i></i><span class="o">«Сверни всё»</span><i></i><span>«Включи believer»</span><i></i><span class="o">«Сделай дискорд тише»</span><i></i><span>«Разбуди в 7»</span><i></i><span class="o">«Что грузит компьютер»</span><i></i><span>«Курс доллара»</span><i></i>
+    </div></div>
+    <div class="mq" data-dir="-1"><div class="mq-track">
+      <span class="o">«Переведи выделенное»</span><i></i><span>«Реши задачу с экрана»</span><i></i><span class="o">«Доброе утро»</span><i></i><span>«Покажи график»</span><i></i><span class="o">«Запусти помодоро»</span><i></i><span>«Перескажи эту статью»</span><i></i><span class="o">«Не то»</span><i></i>
+    </div></div>
+  </section>
+
+  <!-- ============================================================ inside: pinned scroll story -->
+  <section class="pipeline" id="inside" aria-labelledby="inside-title" data-hud="Как работает">
+    <div class="pin">
+      <div class="wrap pin-grid">
+        <div class="pin-text">
+          <span class="eyebrow mono">04 // Как работает</span>
+          <h2 class="h2" id="inside-title">Что происходит после слова «Джарвис»</h2>
+          <div class="stages" id="stages">
+            <article class="st"><b class="mono">01 · Микрофон</b><h3>Слушает, но не мешает</h3><p>Микрофон работает постоянно. Эхоподавление убирает из записи голос самого Джарвиса, поэтому его можно перебить на полуслове.</p><span class="mono">WebRTC AEC3 · на компьютере</span></article>
+            <article class="st"><b class="mono">02 · Имя</b><h3>Узнаёт «Джарвис»</h3><p>Детектор речи и спотер кодового слова проверяют имя дважды: 97% срабатываний и ни одного ложного за 35 минут похожей речи.</p><span class="mono">Silero VAD + Vosk</span></article>
+            <article class="st"><b class="mono">03 · Речь в текст</b><h3>Записывает фразу</h3><p>Распознавание идёт прямо на компьютере. Звук не уходит в интернет ни на каком шаге.</p><span class="mono">GigaAM v3 · 0,1–0,6 с</span></article>
+            <article class="st"><b class="mono">04 · Понимание</b><h3>Понимает, чего вы хотите</h3><p>Сначала мгновенные шаблоны, затем выученные формулировки, затем локальная модель. Новую фразу она разберёт и запомнит.</p><span class="mono">qwen3:8b · 0,34 с · точность 94%</span></article>
+            <article class="st"><b class="mono">05 · Действие</b><h3>Делает дело</h3><p>Один из 26 навыков берётся за работу: окна, звук, музыка, таймеры, сайты. Опасное только после вашего «да».</p><span class="mono">26 навыков · свои в data/skills</span></article>
+            <article class="st"><b class="mono">06 · Ответ</b><h3>Отвечает голосом</h3><p>Голос Джарвиса синтезируется на процессоре, а если есть что прочитать, рядом появляется карточка.</p><span class="mono">Piper «Джарвис Lite» · 0,1 с</span></article>
+          </div>
+          <div class="pin-dots" id="pin-dots" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+        <div class="pin-visual" aria-hidden="true">
+          <canvas id="pipe-orb" width="560" height="560"></canvas>
+          <b class="pin-num mono" id="pin-num">01</b>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============================================================ commands -->
-  <section class="section" id="commands" aria-labelledby="commands-title">
+  <section class="section" id="commands" aria-labelledby="commands-title" data-hud="Команды">
+    <span class="ghost" data-speed="-0.2" aria-hidden="true">05</span>
     <div class="wrap">
       <div class="head reveal">
-        <span class="eyebrow">Команды</span>
-        <h2 class="h2" id="commands-title">Говорите своими словами</h2>
+        <span class="eyebrow mono" data-scramble>05 // Команды</span>
+        <h2 class="h2" id="commands-title" data-scramble>Говорите своими словами</h2>
         <p class="lead">Готовые команды срабатывают мгновенно. Если фраза новая, её разберёт локальная модель и запомнит на будущее. Нажмите на карточку со значком, чтобы услышать ответ.</p>
       </div>
       <div class="tabs reveal" role="tablist" aria-label="Области" id="tabs"></div>
@@ -257,27 +327,20 @@
     </div>
   </section>
 
-  <!-- ============================================================ how it works -->
-  <section class="section" id="install" aria-labelledby="install-title">
+  <!-- ============================================================ install -->
+  <section class="section" id="install" aria-labelledby="install-title" data-hud="Установка">
+    <span class="ghost right" data-speed="-0.2" aria-hidden="true">06</span>
     <div class="wrap">
       <div class="head center reveal">
-        <span class="eyebrow">Установка</span>
-        <h2 class="h2" id="install-title">Три шага до первого «Да, сэр»</h2>
+        <span class="eyebrow mono" data-scramble>06 // Установка</span>
+        <h2 class="h2" id="install-title" data-scramble>Три шага до первого «Да, сэр»</h2>
       </div>
       <ol class="how">
-        <li class="reveal"><span class="n">1</span><h3>Скачайте архив</h3><p>Кнопка «Скачать» берёт свежую версию с GitHub. Распакуйте архив в любую папку.</p></li>
-        <li class="reveal"><span class="n">2</span><h3>Запустите <code>install.bat</code></h3><p>Он сам поставит Python, Ollama и модели речи. Займёт от 15 до 40 минут, прерванная установка продолжится с того же места.</p></li>
-        <li class="reveal"><span class="n">3</span><h3>Скажите «Джарвис»</h3><p>Запустите <code>run.bat</code>. Значок появится в трее, а Джарвис поздоровается и будет ждать команду.</p></li>
+        <li class="glass tilt reveal"><span class="n mono">01</span><h3>Скачайте архив</h3><p>Кнопка «Скачать» берёт свежую версию с GitHub. Распакуйте архив в любую папку.</p></li>
+        <li class="glass tilt reveal"><span class="n mono">02</span><h3>Запустите <code>install.bat</code></h3><p>Он сам поставит Python, Ollama и модели речи. Займёт от 15 до 40 минут, прерванная установка продолжится с того же места.</p></li>
+        <li class="glass tilt reveal"><span class="n mono">03</span><h3>Скажите «Джарвис»</h3><p>Запустите <code>run.bat</code>. Значок появится в трее, а Джарвис поздоровается и будет ждать команду.</p></li>
       </ol>
-      <div class="pipe reveal" aria-label="Что происходит после слова «Джарвис»">
-        <span><i class="ph ph-microphone"></i>Микрофон</span><i class="ph ph-caret-right"></i>
-        <span><i class="ph ph-ear"></i>«Джарвис»</span><i class="ph ph-caret-right"></i>
-        <span><i class="ph ph-text-t"></i>Речь в текст</span><i class="ph ph-caret-right"></i>
-        <span><i class="ph ph-lightbulb"></i>Понимание</span><i class="ph ph-caret-right"></i>
-        <span><i class="ph ph-lightning"></i>Действие</span><i class="ph ph-caret-right"></i>
-        <span><i class="ph ph-speaker-high"></i>Ответ голосом</span>
-      </div>
-      <div class="req reveal">
+      <div class="req mono reveal">
         <span><i class="ph ph-windows-logo"></i>Windows 10 или 11, 64 бит</span>
         <span><i class="ph ph-memory"></i>16 ГБ памяти (8 ГБ без локальной модели)</span>
         <span><i class="ph ph-hard-drives"></i>около 15 ГБ на диске</span>
@@ -287,13 +350,14 @@
   </section>
 
   <!-- ============================================================ comparison -->
-  <section class="section" id="compare" aria-labelledby="compare-title">
+  <section class="section" id="compare" aria-labelledby="compare-title" data-hud="Сравнение">
+    <span class="ghost" data-speed="-0.2" aria-hidden="true">07</span>
     <div class="wrap">
       <div class="head reveal">
-        <span class="eyebrow">Сравнение</span>
-        <h2 class="h2" id="compare-title">Чем он лучше облачных помощников</h2>
+        <span class="eyebrow mono" data-scramble>07 // Сравнение</span>
+        <h2 class="h2" id="compare-title" data-scramble>Чем он лучше облачных помощников</h2>
       </div>
-      <div class="compare reveal">
+      <div class="compare glass frame reveal">
         <table>
           <thead><tr><th scope="col">Что важно</th><th scope="col" class="us">Джарвис</th><th scope="col">Облачный помощник</th></tr></thead>
           <tbody>
@@ -312,27 +376,28 @@
   </section>
 
   <!-- ============================================================ safety -->
-  <section class="section" aria-labelledby="safe-title">
+  <section class="section" id="safety" aria-labelledby="safe-title" data-hud="Безопасность" data-hue="1">
+    <span class="ghost right" data-speed="-0.2" aria-hidden="true">08</span>
     <div class="wrap">
       <div class="head reveal">
-        <span class="eyebrow">Безопасность</span>
-        <h2 class="h2" id="safe-title">Руки в браузере,<br>но под вашим контролем</h2>
+        <span class="eyebrow mono amber" data-scramble>08 // Безопасность</span>
+        <h2 class="h2" id="safe-title" data-scramble>Руки в браузере,<br>но под вашим контролем</h2>
         <p class="lead">Агент работает в отдельной вкладке рядом с вашей. Щёлкните по ней, и увидите, что он нажимает и зачем.</p>
       </div>
       <div class="safe">
-        <div class="a reveal"><h3><i class="ph-fill ph-check-circle"></i>Делает сам</h3><ul><li>Ищет, читает и сравнивает</li><li>Фильтры и сортировка</li><li>Корзина и избранное</li><li>Включает видео</li></ul></div>
-        <div class="b reveal"><h3><i class="ph-fill ph-hand"></i>Только после «да»</h3><ul><li>Заказ и оплата сохранённой картой</li><li>Отправка форм, сообщений и отзывов</li><li>Подписки и удаление</li><li>Настройки аккаунта</li></ul></div>
-        <div class="c reveal"><h3><i class="ph-fill ph-prohibit"></i>Никогда</h3><ul><li>Пароли и коды из СМС</li><li>Данные карт и паспорта</li><li>Банки, Госуслуги, переводы денег</li><li>Капча и принятие условий</li></ul></div>
+        <div class="glass tilt a reveal"><h3><i class="ph-fill ph-check-circle"></i>Делает сам</h3><ul><li>Ищет, читает и сравнивает</li><li>Фильтры и сортировка</li><li>Корзина и избранное</li><li>Включает видео</li></ul></div>
+        <div class="glass tilt b reveal"><h3><i class="ph-fill ph-hand"></i>Только после «да»</h3><ul><li>Заказ и оплата сохранённой картой</li><li>Отправка форм, сообщений и отзывов</li><li>Подписки и удаление</li><li>Настройки аккаунта</li></ul></div>
+        <div class="glass tilt c reveal"><h3><i class="ph-fill ph-prohibit"></i>Никогда</h3><ul><li>Пароли и коды из СМС</li><li>Данные карт и паспорта</li><li>Банки, Госуслуги, переводы денег</li><li>Капча и принятие условий</li></ul></div>
       </div>
     </div>
   </section>
 
   <!-- ============================================================ faq -->
-  <section class="section" id="faq" aria-labelledby="faq-title">
+  <section class="section" id="faq" aria-labelledby="faq-title" data-hud="Вопросы">
     <div class="wrap faq-wrap">
       <div class="head reveal">
-        <span class="eyebrow">Вопросы</span>
-        <h2 class="h2" id="faq-title">Частые вопросы</h2>
+        <span class="eyebrow mono" data-scramble>09 // Вопросы</span>
+        <h2 class="h2" id="faq-title" data-scramble>Частые вопросы</h2>
         <p class="lead">Не нашли ответ? Задайте вопрос на <a href="https://github.com/N1ck6/Your-Jarvis-Assistant/issues">GitHub</a>.</p>
       </div>
       <div class="faq reveal" id="faq-list">
@@ -351,13 +416,17 @@
   </section>
 
   <!-- ============================================================ final -->
-  <section class="section" aria-labelledby="final-title">
+  <section class="section" id="start" aria-labelledby="final-title" data-hud="Запуск">
     <div class="wrap">
-      <div class="final reveal">
-        <img src="assets/favicon.svg" alt="" width="64" height="64">
+      <div class="final glass frame reveal">
+        <div class="final-orb">
+          <canvas id="mic-orb" width="320" height="320" aria-hidden="true"></canvas>
+          <button class="mic" type="button" id="mic" aria-pressed="false"><i class="ph ph-microphone"></i><span>Скажите «Джарвис» в микрофон</span></button>
+          <p class="mic-note mono" id="mic-note" aria-live="polite">Реактор отзовётся на ваш голос. Звук не покидает страницу.</p>
+        </div>
         <h2 class="h2" id="final-title">Скажите «Джарвис»<br>уже сегодня</h2>
         <p class="lead">Установка займёт меньше часа, а первая команда меньше секунды.</p>
-        <a class="btn btn-primary" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
+        <a class="btn btn-primary btn-lg magnetic" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать для Windows</a>
         <div class="risk">
           <span><i class="ph-fill ph-check-circle"></i>Бесплатно, лицензия MIT</span>
           <span><i class="ph-fill ph-check-circle"></i>Без аккаунта и подписки</span>
@@ -380,6 +449,7 @@
   </div>
 </footer>
 
+<script src="assets/bg.js" defer></script>
 <script src="assets/site.js" defer></script>
 </body>
 </html>

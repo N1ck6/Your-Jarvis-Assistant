@@ -9,11 +9,14 @@
 <link rel="icon" href="/Your-Jarvis-Assistant/assets/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <link rel="stylesheet" href="/Your-Jarvis-Assistant/assets/site.css">
 </head>
 <body>
+<canvas id="bg-gl" aria-hidden="true"></canvas>
+<canvas id="bg-fx" aria-hidden="true"></canvas>
+<div class="scan" aria-hidden="true"></div>
 <main class="lost">
   <div>
     <img src="/Your-Jarvis-Assistant/assets/favicon.svg" alt="" width="64" height="64">
@@ -23,5 +26,6 @@
     <a class="btn btn-primary" href="/Your-Jarvis-Assistant/"><i class="ph ph-arrow-left"></i>Вернуться на главную</a>
   </div>
 </main>
+<script src="/Your-Jarvis-Assistant/assets/bg.js" defer></script>
 </body>
 </html>

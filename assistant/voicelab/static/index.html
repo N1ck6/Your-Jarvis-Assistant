@@ -411,7 +411,7 @@ async function historyPage() {
     list.replaceChildren(items.length ? h("div", { class: "panel" }, h("table", {},
       h("tr", {}, h("th", {}, "Когда"), h("th", {}, "Запрос"), h("th", {}, "Ответ"), h("th", {})),
       items.map(it => {
-        const note = h("input", { value: it.note || "", placeholder: "что было нужно", style: "width:100%;margin-top:6px" });
+        const note = h("input", { type: "text", value: it.note || "", placeholder: "что было нужно", style: "width:100%;margin-top:6px" });
         const save = async wrong => { await api("/api/history/mark", { id: it.id, wrong, note: note.value }); it.wrong = wrong; it.note = note.value; render(); };
         return h("tr", {},
           h("td", { class: "metrics", style: "white-space:nowrap" }, it.time.slice(5, 16), h("br"), (it.sec || 0) + " с"),

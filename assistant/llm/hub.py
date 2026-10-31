@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from assistant.config import LlmCfg
 from assistant.llm.usage import Usage
 from assistant.llm.providers import (AuthError, GeminiProvider, GroqProvider, Msg, OllamaProvider, Provider, ProviderError,
-                                     QuotaError)
+                                     QuotaError, RegionError)
 
 log = logging.getLogger("llm")
 
@@ -39,6 +39,9 @@ class LlmHub:
         self._cooldown_until: dict[str, float] = {}
         self.last_provider = ""
         self.usage = Usage()
+        # Told once per provider and run: a service that refuses this key or this country (the tray shows it).
+        self.on_unavailable: Callable[[str, str], None] = lambda name, why: None
+        self._told: set[str] = set()
 
     def status(self) -> dict[str, str]:
         now = time.monotonic()
@@ -93,8 +96,14 @@ class LlmHub:
                     return
                 log.warning("%s вернул пустой ответ", provider.name)
             except AuthError as exc:
+                # A wrong key or a blocked country does not fix itself in a minute: an hour off instead of a wasted
+                # request (and seconds of waiting) on every question.
                 self._cooldown_until[provider.name] = time.monotonic() + AUTH_COOLDOWN_SEC
                 log.error("%s отключён на час: %s", provider.name, exc)
+                if provider.name not in self._told:
+                    self._told.add(provider.name)
+                    why = str(exc) if isinstance(exc, RegionError) else f"{provider.name}: неверный ключ или нет доступа"
+                    self.on_unavailable(provider.name, why + ". Отвечают другие модели; повторю через час.")
             except QuotaError as exc:
                 pause = cooldown_for(exc, self.cfg.cooldown_sec)
                 self._cooldown_until[provider.name] = time.monotonic() + pause

@@ -132,6 +132,7 @@ class Assistant:
 
         self.dialog = Dialog(cfg.assistant.dialog_ttl_sec, cfg.assistant.dialog_max_turns)
         self.llm = LlmHub(cfg.llm)
+        self.llm.on_unavailable = lambda name, why: self.ui.notify("Облачная модель недоступна", why)
         self.tts = TtsManager(cfg.tts.voice, cfg.tts.rate, clone_nfe=cfg.tts.clone_nfe)
         self.pack: VoicePack | None = load_pack(cfg.voice.pack)
         self.player = Player(cfg.audio.output_device, cfg.tts.volume)
@@ -260,7 +261,19 @@ class Assistant:
         await loop.run_in_executor(None, nlu._morph)
         if self.state is State.IDLE:
             self.ui.set_state(State.IDLE, "локальная модель загружается…")
+        if not await self.llm.local.alive():
+            from assistant.llm import ollama_keeper
+
+            if await asyncio.to_thread(ollama_keeper.start_server):
+                log.info("Запускаю Ollama")
+                for _ in range(30):
+                    await asyncio.sleep(0.5)
+                    if await self.llm.local.alive():
+                        break
         await self.llm.local.warmup()
+        if self.llm.local.downgraded:
+            big, small = self.llm.local.downgraded
+            self.ui.notify("Локальная модель", f"{big} не помещается в память — работаю на {small}")
         if self.cfg.router.model and self.cfg.router.model != self.cfg.llm.local.model:
             await self.llm.local.warmup(self.cfg.router.model)
         if self.state is State.IDLE:
@@ -268,17 +281,49 @@ class Assistant:
         asyncio.create_task(self._watch_local())
 
     async def _watch_local(self) -> None:
-        """Ollama closed or restarted: the router and answers switch to the cloud and back by themselves."""
+        """Ollama closed or restarted: the router and answers switch to the cloud and back by themselves; Ollama is
+        started if it is installed. A model pushed partly onto the CPU (another program held the video memory when
+        it loaded) is reloaded whole once the memory is free and Jarvis is idle (see ollama_keeper)."""
+        from assistant.llm import ollama_keeper as keeper
+
         local = self.llm.local
+        started_at = time.monotonic()
+        last_reload, told_slow = 0.0, False
         while True:
             await asyncio.sleep(30)
-            alive = await local.alive()
-            if alive and not local.healthy:
+            if not await local.alive():
+                if local.healthy:
+                    local.healthy = False
+                    log.warning("Ollama не отвечает: маршрутизатор и ответы идут через облако, пока она не вернётся")
+                if time.monotonic() - started_at > 300 and await asyncio.to_thread(keeper.start_server):
+                    started_at = time.monotonic()
+                    log.info("Запускаю Ollama")
+                continue
+            if not local.healthy:
                 if await local.warmup():
                     log.info("Ollama снова доступна: локальная модель вернулась")
-            elif not alive and local.healthy:
-                local.healthy = False
-                log.warning("Ollama не отвечает: маршрутизатор и ответы идут через облако, пока она не вернётся")
+                continue
+            place = await local.placement()
+            if place is None or not place[0]:
+                continue   # unloaded after keep_alive: it is placed again on the next request
+            size, vram = place
+            if vram / size >= keeper.WHOLE:
+                told_slow = False
+                continue
+            if not told_slow:
+                told_slow = True
+                log.warning("Локальная модель на %d%% на процессоре: видеокарта занята другой программой, "
+                            "ответы медленнее; перезагружу её, когда память освободится", round(100 - 100 * vram / size))
+            if self.idle_for() < 10 or time.monotonic() - last_reload < 120:
+                continue
+            free = await asyncio.to_thread(keeper.gpu_free_mb)
+            if keeper.worth_reload(size, vram, free):
+                last_reload = time.monotonic()
+                await local.unload(local.cfg.model)
+                await local.warmup()
+                place = await local.placement()
+                if place and place[0]:
+                    log.info("Локальная модель перезагружена: %d%% на видеокарте", round(100 * place[1] / place[0]))
 
     async def _fetch_packs(self) -> None:
         """Recorded Jarvis reactions missing (a fresh installed build): download them in the background."""

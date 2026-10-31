@@ -96,6 +96,15 @@ CONFIRM_TTL_SEC = 20
 _META = {"again", "repeat", "stop", "wrong", "undo", "thanks", "recall", "recall_more", "history", "correct",
          "rerun"}
 # Not noted as a turn at all: a look into the history, and a correction (the corrected request is noted instead).
+# Actions that are not undone by "не то": a guessed one (the router, not a module's own pattern) is confirmed first.
+_RISKY = {("windows", "close"), ("windows", "kill"), ("power", "off"), ("power", "reboot"), ("power", "sleep")}
+
+
+def _risky(skill: Skill, intent: Intent) -> bool:
+    action = intent.slots.get("action") if intent.action == "tool" else intent.action
+    return (skill.name, action) in _RISKY
+
+
 _UNNOTED = {"recall", "recall_more", "history", "correct", "rerun"}
 # After "какой был мой прошлый запрос": "давай ещё раз", "повтори его" run that request again.
 _RERUN = re.compile(r"^(?:да |давай |ну )*(?:повтори|выполни|сделай|запусти|спроси|давай)(?: (?:его|ее|это|этот запрос|"
@@ -426,6 +435,15 @@ class Brain:
 
     # ------------------------------------------------------------------ commands
     async def _run_commands(self, text: str, hits: list[tuple[Skill, Intent]], source: str = "skill") -> Reply:
+        if source in ("router", "phrasebook") and any(_risky(s, i) for s, i in hits):
+            # The model guessed the command from free words: closing programs or switching the computer off on
+            # a guess ("спрячь все окна" -> "закрой всё") is not undone by "не то". Ask first.
+            what = "; ".join(i.text for _, i in hits)
+            log.info("Опасная догадка маршрутизатора «%s» → %s: спрашиваю", private(text), what)
+
+            async def go() -> Reply:
+                return await self._run_commands(text, hits, "confirmed")
+            return Reply(f"Правильно понимаю: {what}? Скажите «да».", confirm=go)
         replies: list[Reply] = []
         meta = all(skill.name == "system" and intent.action in _META for skill, intent in hits)
         for skill, intent in hits:

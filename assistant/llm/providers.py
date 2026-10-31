@@ -53,6 +53,15 @@ class AuthError(ProviderError):
     """Invalid or missing API key; retrying is pointless until the key is fixed."""
 
 
+class RegionError(AuthError):
+    """The service refuses requests from this country (Gemini: "User location is not supported"): a VPN is needed."""
+
+
+def _is_region_problem(message: str) -> bool:
+    msg = message.lower()
+    return "location is not supported" in msg or "unsupported_country" in msg or "not available in your country" in msg
+
+
 def _is_auth_problem(code: int, message: str) -> bool:
     msg = message.lower()
     return code in (401, 403) or "api key not valid" in msg or "api_key_invalid" in msg or "permission" in msg
@@ -171,6 +180,8 @@ class GeminiProvider(Provider):
                     if code == 400 and model not in self._no_thinking_cfg and "think" in str(exc).lower():
                         self._no_thinking_cfg.add(model)  # older model without thinking levels
                         continue
+                    if _is_region_problem(str(exc)):
+                        raise RegionError("Gemini недоступен из вашего региона — нужен VPN") from exc
                     if _is_auth_problem(code, str(exc)):
                         raise AuthError("gemini: неверный GEMINI_API_KEY или нет доступа из региона (VPN?)") from exc
                     if code == 429 and searching:
@@ -264,6 +275,8 @@ class GroqProvider(Provider):
                 log.warning("groq/%s: лимит%s, ждать %s с", model, " дневной" if _is_daily(str(exc)) else "",
                             round(waits[-1]))
             except (openai.AuthenticationError, openai.PermissionDeniedError) as exc:
+                if _is_region_problem(str(exc)):
+                    raise RegionError("Groq недоступен из вашего региона — нужен VPN") from exc
                 raise AuthError("groq: неверный GROQ_API_KEY или нет доступа из региона (VPN?)") from exc
             except (openai.APIStatusError, openai.APIConnectionError, openai.APITimeoutError) as exc:
                 last_exc = exc
@@ -291,6 +304,7 @@ class OllamaProvider(Provider):
         self.cfg = cfg
         self.client = AsyncClient(host=cfg.host)
         self.healthy = False  # set by warmup(); the router prefers the local model when it runs
+        self.downgraded: tuple[str, str] | None = None   # (configured, used instead): it did not fit in memory
 
     def available(self) -> bool:
         return True
@@ -325,10 +339,40 @@ class OllamaProvider(Provider):
             log.info("Локальная модель %s загружена", model)
             return True
         except Exception as exc:
+            if model == self.cfg.model and "memory" in str(exc).lower() and await self.use_smaller(str(exc)):
+                return await self.warmup()
             if model == self.cfg.model:
                 self.healthy = False
             log.warning("Модель %s недоступна (%s). Запустите Ollama или скачайте модель: ollama pull %s", model, exc, model)
             return False
+
+    async def use_smaller(self, reason: str) -> bool:
+        """The model does not fit in memory: switch to a smaller installed one (until the restart)."""
+        from assistant.llm.ollama_keeper import smaller_model
+
+        try:
+            installed = [m.model for m in (await self.client.list()).models]
+        except Exception:
+            return False
+        alt = smaller_model(installed, self.cfg.model)
+        if alt is None:
+            return False
+        log.warning("%s не помещается в память (%s): перехожу на %s", self.cfg.model, reason[:120], alt)
+        self.downgraded = (self.downgraded[0] if self.downgraded else self.cfg.model, alt)
+        self.cfg.model = alt
+        return True
+
+    async def placement(self, model: str = "") -> tuple[int, int] | None:
+        """(size, size in video memory) of a loaded model; None if it is not loaded."""
+        model = model or self.cfg.model
+        try:
+            loaded = (await asyncio.wait_for(self.client.ps(), timeout=3)).models
+        except Exception:
+            return None
+        for m in loaded:
+            if m.model == model or m.model.removesuffix(":latest") == model:
+                return int(m.size or 0), int(m.size_vram or 0)
+        return None
 
     async def alive(self) -> bool:
         """Is the Ollama server answering (cheap, no model is loaded)."""
@@ -360,6 +404,9 @@ class OllamaProvider(Provider):
             except Exception as exc:
                 if think is not None and "think" in str(exc).lower():
                     think = None  # model without a thinking switch
+                    continue
+                if not vision and "memory" in str(exc).lower() and await self.use_smaller(str(exc)):
+                    model = self.cfg.model
                     continue
                 raise ProviderError(f"ollama/{model}: {exc}") from exc
         async for part in stream:

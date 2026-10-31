@@ -183,6 +183,7 @@ class UiCfg(BaseModel):
 
 class PrivacyCfg(BaseModel):
     log_phrases: str = "auto"       # auto (with a console window) | on | off: what you say goes into data/logs
+    save_history: bool = False      # data/history.jsonl: requests and answers, kept across restarts
 
 
 class VoiceLabCfg(BaseModel):

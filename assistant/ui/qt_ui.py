@@ -18,6 +18,7 @@ from PySide6.QtGui import (QAction, QColor, QCursor, QFont, QGuiApplication, QIc
 from PySide6.QtWidgets import (QApplication, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton,
                                QScrollArea, QSystemTrayIcon, QTextBrowser, QVBoxLayout, QWidget)
 
+from assistant import mathtext
 from assistant.core import STATE_LABELS, Deck, State
 
 if TYPE_CHECKING:
@@ -1238,7 +1239,10 @@ class QtUi(QObject):
             self.hud.set_state(state)
         label = STATE_LABELS.get(state, state.value)
         self.tray.setIcon(state_icon(state))
-        tip = f"Джарвис — {label}" + (f"\n{detail[:80]}" if detail else "")
+        detail = mathtext.spoken_to_display(detail)   # "3 синус 2x квадрат" -> "3·sin(2x²)"
+        if len(detail) > 100:   # a Windows tray tooltip holds ~127 characters: cut at a word, with "…"
+            detail = detail[:100].rsplit(" ", 1)[0] + "…"
+        tip = f"Джарвис — {label}" + (f"\n{detail}" if detail else "")
         self.tray.setToolTip(tip)
         # While working, the menu says on what: "Думаю: Музыка…" (the skill being run).
         self._status_action.setText(f"{label}: {detail[:40]}" if state is State.THINKING and detail.endswith("…") else label)

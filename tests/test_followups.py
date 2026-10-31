@@ -217,3 +217,16 @@ def test_wrong_answer_and_why_after_a_solution(solver):
 def test_what_if_without_a_task_is_not_a_solution(solver):
     app, solve, sent, decks = solver
     assert solve.followup("а что если скорость 80", None) is None
+
+
+def test_correction_marks_the_request_wrong_in_the_history(env, tmp_path, monkeypatch):
+    from assistant import history
+
+    monkeypatch.setattr(history, "FILE", tmp_path / "history.jsonl")
+    a, media, apps = env
+    a.cfg.privacy.save_history = True
+    say(a, "открой телеграм")
+    history.add("открой телеграм", "Открыл.")
+    say(a, "не то, я имел в виду закрой телеграм")
+    item = history.items()[0]
+    assert item["wrong"] and "закрой телеграм" in item["note"]

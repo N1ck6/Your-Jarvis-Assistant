@@ -137,6 +137,12 @@ class TextRequest(BaseModel):
     text: str
 
 
+class HistoryMark(BaseModel):
+    id: str
+    wrong: bool = True
+    note: str = ""
+
+
 class ScenariosRequest(BaseModel):
     items: list[dict[str, Any]]
 
@@ -407,6 +413,34 @@ def create_app(host: Host) -> FastAPI:
     def run_scenario(req: TextRequest) -> dict:
         if not req.text.strip() or not host.run_phrase(req.text.strip()):
             raise HTTPException(400, "Проверить можно, когда страница открыта из работающего Джарвиса")
+        return {"ok": True}
+
+    @app.get("/api/history")
+    def get_history() -> dict:
+        from assistant import history
+
+        return {"items": history.items(), "enabled": bool(host.cfg.privacy.save_history)}
+
+    @app.post("/api/history/mark")
+    def mark_history(req: HistoryMark) -> dict:
+        from assistant import history
+
+        if not history.mark(req.id, req.wrong, req.note):
+            raise HTTPException(404, "Запись не найдена")
+        return {"ok": True}
+
+    @app.post("/api/history/delete")
+    def delete_history(req: HistoryMark) -> dict:
+        from assistant import history
+
+        history.delete(req.id)
+        return {"ok": True}
+
+    @app.post("/api/history/clear")
+    def clear_history() -> dict:
+        from assistant import history
+
+        history.clear()
         return {"ok": True}
 
     @app.get("/api/phrasebook")

@@ -399,6 +399,36 @@ async function phrasesPage() {
           h("div", { class: "panel" }, h("table", {}, h("tr", {}, h("th", {}, "Фраза"), h("th", {}, "Команды"), h("th", {}, "Раз"), h("th", {})), rows))];
 }
 
+async function historyPage() {
+  const data = await api("/api/history");
+  let onlyWrong = false;
+  const intro = h("p", { class: "note" }, data.enabled
+    ? "Запрос, как Джарвис его понял, и ответ. «Не то» голосом помечает запрос ошибкой; здесь можно пометить вручную и записать, что было нужно. Файл: data/history.jsonl."
+    : "История выключена: включите «Сохранять историю запросов» в разделе «Основное».");
+  const list = h("div", {});
+  const render = () => {
+    const items = data.items.filter(it => !onlyWrong || it.wrong);
+    list.replaceChildren(items.length ? h("div", { class: "panel" }, h("table", {},
+      h("tr", {}, h("th", {}, "Когда"), h("th", {}, "Запрос"), h("th", {}, "Ответ"), h("th", {})),
+      items.map(it => {
+        const note = h("input", { value: it.note || "", placeholder: "что было нужно", style: "width:100%;margin-top:6px" });
+        const save = async wrong => { await api("/api/history/mark", { id: it.id, wrong, note: note.value }); it.wrong = wrong; it.note = note.value; render(); };
+        return h("tr", {},
+          h("td", { class: "metrics", style: "white-space:nowrap" }, it.time.slice(5, 16), h("br"), (it.sec || 0) + " с"),
+          h("td", {}, h("span", { class: it.wrong ? "bad" : "" }, it.query), h("div", { class: "metrics" }, it.route || ""), note),
+          h("td", { style: "white-space:pre-wrap;max-width:420px" }, it.answer || "—"),
+          h("td", { style: "white-space:nowrap" },
+            h("button", { class: "btn ghost small", onclick: () => save(!it.wrong) }, it.wrong ? "Верно" : "Неверно"), " ",
+            h("button", { class: "btn ghost small", onclick: () => save(it.wrong) }, "Сохранить"), " ",
+            h("button", { class: "btn ghost small", onclick: async () => { await api("/api/history/delete", { id: it.id }); data.items = data.items.filter(x => x !== it); render(); } }, "×")));
+      }))) : h("p", { class: "note" }, onlyWrong ? "Ошибок нет." : "Пока пусто."));
+  };
+  render();
+  const filter = h("label", {}, h("input", { type: "checkbox", onchange: e => { onlyWrong = e.target.checked; render(); } }), " только ошибки");
+  const clear = h("button", { class: "btn ghost", onclick: async () => { if (confirm("Стереть всю историю запросов?")) { await api("/api/history/clear", {}); route("История"); } } }, "Очистить");
+  return [intro, h("div", { class: "row", style: "margin-bottom:12px" }, filter, h("span", { class: "grow" }), clear), list];
+}
+
 const PERMS = { screen: "экран", clipboard: "буфер обмена", cloud_llm: "облачные модели", local_llm: "локальная модель",
   browser: "браузер", files: "файлы", power: "питание ПК", keyboard: "клавиатура", network: "интернет", apps: "запуск программ",
   microphone: "микрофон" };
@@ -433,7 +463,7 @@ async function skillsPage() {
 }
 
 // ---------------------------------------------------------------- routing
-const EXTRA = ["Навыки", "Сценарии", "Выученные фразы"];
+const EXTRA = ["Навыки", "Сценарии", "Выученные фразы", "История"];
 async function route(title) {
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.textContent === title));
   const page = $("#page");
@@ -445,6 +475,7 @@ async function route(title) {
     else if (title === "Навыки") body = await skillsPage();
     else if (title === "Сценарии") body = await scenariosPage();
     else if (title === "Выученные фразы") body = await phrasesPage();
+    else if (title === "История") body = await historyPage();
     else body = [renderFields(section.fields)];
   } catch (e) { body = [h("p", { class: "bad" }, "Ошибка: " + e.message)]; }
   page.replaceChildren(h("h2", {}, title), ...body);

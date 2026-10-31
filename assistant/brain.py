@@ -283,8 +283,18 @@ class Brain:
             self._remember_confirm(reply)
         return reply
 
+    def _mark_wrong(self, note: str = "") -> None:
+        """"не то": the request is marked wrong in the history (Настройки → История), if it is kept."""
+        cfg = getattr(self.app, "cfg", None)
+        if cfg is not None and cfg.privacy.save_history:
+            from assistant import history
+
+            history.mark_last_wrong(note)
+
     async def undo_last(self, forget: bool) -> Reply:
         """"верни как было" (forget=False) and "не то" (forget=True: the phrase was misunderstood)."""
+        if forget:
+            self._mark_wrong()
         forgot = False
         if forget and self.last_route and self.last_route[1] in ("phrasebook", "router"):
             forgot = self.router.forget(self.last_route[0])
@@ -615,6 +625,8 @@ class Brain:
         if undo and self.last_answer_key:   # the cached answer was wrong
             self.router.forget_answer(self.last_answer_key)
             self.last_answer_key = ""
+        if undo:
+            self._mark_wrong(f"поправка: {change}")
         log.info("Поправка к «%s»: %s", private(base.text), private(change))
         return await self._handle(change, revise=base)
 

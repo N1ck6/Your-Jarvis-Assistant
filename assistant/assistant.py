@@ -254,6 +254,10 @@ class Assistant:
         asyncio.create_task(self._check_updates())
         asyncio.create_task(self._watch_code())
         asyncio.create_task(self._watch_thinking())
+        try:
+            self._restore_history()
+        except Exception:
+            log.exception("История запросов не восстановлена")
         if self.pack is None and self.cfg.voice.pack != "none":
             asyncio.create_task(self._fetch_packs())
         self._set_state(State.IDLE)
@@ -1239,8 +1243,10 @@ class Assistant:
         listen_after = True
         extra: list[Reply] = []
         deferred: list = []
+        asyncio.current_task().answers = []   # type: ignore[attr-defined]  # what _deliver said, for the history
         try:
             reply = await self.brain.handle(query, addressed=addressed)
+            self._history_route = self._route_of_last()
             # This request's own follow-ups: another request may run alongside it (one left in the background).
             extra, deferred = list(self.brain.extra), list(self.brain.deferred)
             self.brain.extra.clear()
@@ -1257,6 +1263,7 @@ class Assistant:
         except Exception as exc:
             log.exception("Ошибка обработки запроса")
             await self._deliver(Reply(f"Не получилось: {errors.explain(exc)}.", error=True), started, query)
+        self._save_history(query, started)
         await self._wait_hold()
         if self._task is asyncio.current_task():
             self._after_answer(listen_after, expect_answer=self.brain.expects_answer())
@@ -1331,7 +1338,45 @@ class Assistant:
                  " (+ экран)" if screen else "")
         if text:
             self.ui.chat_add("assistant", text + (f"\n\n{screen}" if screen else ""))
+            answers = getattr(asyncio.current_task(), "answers", None)
+            if answers is not None:
+                answers.append(text + (f"\n{screen}" if screen else ""))
         return reply.listen_after or reply.confirm is not None
+
+    def _route_of_last(self) -> str:
+        """How the request was understood, for the history: "command: выполнено …", "answer: ответил …"."""
+        turns = getattr(self.brain, "turns", None)
+        if not turns:
+            return ""
+        t = turns[-1]
+        return f"{t.kind or 'reply'}: {t.did}"[:200] + (f" (понято как «{t.asked}»)" if t.asked else "")
+
+    def _save_history(self, query: str, started: float) -> None:
+        if not self.cfg.privacy.save_history:
+            return
+        from assistant import history
+
+        answers = getattr(asyncio.current_task(), "answers", None) or []
+        history.add(query, "\n".join(answers), getattr(self, "_history_route", ""), time.perf_counter() - started)
+
+    def _restore_history(self) -> None:
+        """After a restart (an update): the conversation of the last minutes is back, "а завтра?" still works."""
+        if not self.cfg.privacy.save_history:
+            return
+        from assistant import history
+        from assistant.router import Turn
+
+        now_wall, now = time.time(), time.monotonic()
+        items = history.recent(self.cfg.assistant.dialog_ttl_sec)[-20:]
+        for it in items:
+            at = now - (now_wall - float(it["id"]))
+            kind = "command" if it.get("route", "").startswith("command") else "answer"
+            self.brain.turns.append(Turn(it["query"], it.get("answer", "")[:200], kind, at=at))
+            if kind == "answer":
+                self.dialog.add("user", it["query"])
+                self.dialog.add("assistant", it.get("answer", ""))
+        if items:
+            log.info("Восстановлено из истории запросов: %d", len(items))
 
     def show_visual_for(self, text: str):
         """A picture next to the answer when seeing beats hearing (graph, molecule, photo); fetched in the background.

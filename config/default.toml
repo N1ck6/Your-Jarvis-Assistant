@@ -206,6 +206,9 @@ restart_on_update = true
 # Write what you say and what Jarvis answers into data/logs: auto = only when started with a console
 # (development, python -m assistant), not from the tray shortcut (pythonw) | on | off.
 log_phrases = "auto"
+# Keep requests and answers in data/history.jsonl (Настройки → История): to find wrong answers; the last minutes of
+# the conversation also survive a restart.
+save_history = false
 
 [voicelab]
 host = "127.0.0.1"

@@ -195,3 +195,42 @@ def to_display(text: str) -> str:
     if "$" not in text and "\\" not in text:
         return text
     return _replace_spans(text, _display)
+
+
+# ---------------------------------------------------------------- spoken math -> symbols
+# "построй график 3 синус 2x квадрат" -> "построй график 3·sin(2x²)": the tray tooltip shows the request short.
+_SPOKEN_TRIGGER = re.compile(r"\b(график|функци|уравнени|синус|косинус|тангенс|котангенс|логарифм|корень|корня|"
+                             r"квадрат|куб|степен|икс|игрек|интеграл|производн)", re.I)
+_FUNCS = "sin|cos|tg|ctg|log|ln|exp"
+_SPOKEN = [
+    (r"\bнатуральн\w* логарифм\w*", " ln "),
+    (r"\b(?:кубическ\w* корень|корень кубическ\w*)(?: из)?\b", " ∛"),
+    (r"\bкорень(?: квадратн\w*)?(?: из)?\b", " √"),
+    (r"\bкосинус\w*", " cos "), (r"\bкотангенс\w*", " ctg "), (r"\bсинус\w*", " sin "), (r"\bтангенс\w*", " tg "),
+    (r"\bлогарифм\w*", " log "), (r"\bэкспонент\w*", " exp "),
+    (r"\bиксы?\b|\bх\b", "x"), (r"\bигрек\w*", "y"), (r"\bпи\b", "π"),
+    # Only after a number, a variable or a bracket: "нарисуй квадрат", "всё равно" stay words.
+    (r"(?<=[a-z0-9)π])\s*(?:в )?квадрат\w{0,2}\b", "²"), (r"(?<=[a-z0-9)π])\s*(?:в )?куб[еа]?\b", "³"),
+    (r"(?<=[a-z0-9)π²³])\s*равн[оа]\b", " = "),
+    (r"\bплюс\b", " + "), (r"\bминус\b", " − "),
+    (r"\b(?:умножить|умноженн\w*) на\b", "·"), (r"\b(?:разделить|делить|деленн\w*|делённ\w*) на\b", "/"),
+]
+_SUP_LETTERS = {"x": "ˣ", "y": "ʸ", "n": "ⁿ"}
+
+
+def spoken_to_display(text: str) -> str:
+    """Spoken math in a request ("корень из икс", "2x квадрат") written with symbols; other text as is."""
+    if not _SPOKEN_TRIGGER.search(text):
+        return text
+    t = text
+    for pattern, repl in _SPOKEN:
+        t = re.sub(pattern, repl, t, flags=re.I)
+    t = re.sub(r"(?<=[a-z0-9)π])\s*\bв степени\s+(минус\s+|−\s*)?(\d+|[xyn]\b)",
+               lambda m: ("⁻" if m.group(1) else "") + _SUP_LETTERS.get(m.group(2), m.group(2).translate(_SUP)),
+               t, flags=re.I)
+    t = re.sub(r"(\d)\s+(?=[a-zπ](?![a-z]))", r"\1", t)                        # 2 x -> 2x
+    t = re.sub(rf"(\d)\s+(?=(?:{_FUNCS})\b|[√∛])", r"\1·", t)                 # 3 sin -> 3·sin
+    t = re.sub(r"([√∛])\s+", r"\1", t)
+    t = re.sub(rf"\b({_FUNCS})\s+([^\s+−=/·]+)", r"\1(\2)", t)                  # sin 2x² -> sin(2x²)
+    t = re.sub(r"\s*([+−=/])\s*", r" \1 ", t)
+    return re.sub(r"\s{2,}", " ", t).strip()

@@ -82,6 +82,8 @@ greet_on_start = true
 reply_on_bare_wake = true
 # "Слушаюсь, сэр" instead of describing simple actions (open app, close window...).
 ok_for_actions = true
+# An answer that takes long to start (an internet search): "Ищу, сэр" after this many seconds; 0 = silence.
+wait_phrase_sec = 2.5
 
 [llm]
 # Order of the chain for short factual / internet questions.

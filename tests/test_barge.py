@@ -161,3 +161,109 @@ def test_started_with_windows_jarvis_stays_silent(tmp_path, monkeypatch):
         await asyncio.sleep(0.05)
     asyncio.run(run())
     assert notes == ["чайник"] and app.announced == []
+
+
+class FakeSpeaker:
+    def __init__(self):
+        self.said = []
+        self.speaking = False
+        self.last_text = ""
+
+    def stop(self):
+        pass
+
+    def recent_text(self):
+        return ""
+
+    async def say(self, text):
+        self.said.append(text)
+        return text
+
+    async def speak(self, source):
+        text = "".join([d async for d in source])
+        self.said.append(text)
+        return text
+
+
+class SlowBrain(FakeBrain):
+    """The first question searches for a while (its answer streams late); the next ones answer at once."""
+
+    def __init__(self, delay):
+        super().__init__()
+        self.delay = delay
+
+    async def handle(self, text, addressed=True):
+        self.asked.append(text)
+        if len(self.asked) == 1:
+            async def stream():
+                await asyncio.sleep(self.delay)
+                yield "В Москве плюс пять."
+            return Reply(stream=stream(), listen_after=False)
+        return Reply("Сейчас 12:30.", listen_after=False)
+
+
+def parallel_app(monkeypatch, delay=0.4):
+    import assistant.assistant as module
+
+    monkeypatch.setattr(module, "BACKGROUND_GAP_SEC", 0.1)
+    app = make_app("")
+    app.speaker = FakeSpeaker()
+    app.brain = SlowBrain(delay)
+    app.llm = type("Llm", (), {"last_provider": "groq"})()
+    app.cfg.voice.wait_phrase_sec = 0
+    app.react = lambda reaction: asyncio.sleep(0, False)
+    return app
+
+
+def test_a_new_question_does_not_cancel_a_slow_search(monkeypatch):
+    """The weather is still being searched when the user asks the time: both are answered, the late one says
+    it is about the previous question."""
+    async def run():
+        app = parallel_app(monkeypatch)
+        first = asyncio.create_task(app.handle_text("какая погода в москве"))
+        await asyncio.sleep(0.1)
+        second = asyncio.create_task(app.handle_text("который час"))
+        await asyncio.gather(first, second)
+        return app.speaker.said
+    said = asyncio.run(run())
+    assert said == ["Сейчас 12:30.", "По прошлому вопросу. В Москве плюс пять."]
+
+
+def test_the_late_answer_waits_while_the_user_is_still_speaking(monkeypatch):
+    async def run():
+        app = parallel_app(monkeypatch, delay=0.1)
+        first = asyncio.create_task(app.handle_text("какая погода в москве"))
+        await asyncio.sleep(0.05)
+        app._to_background(first)          # the name was said over it: the user is asking something new
+        app._task = None
+        app.state = State.LISTENING          # ... and is still speaking when the answer is ready
+        await asyncio.sleep(0.4)
+        assert app.speaker.said == []
+        app.state = State.THINKING
+        await first
+        return app.speaker.said
+    assert asyncio.run(run()) == ["По прошлому вопросу. В Москве плюс пять."]
+
+
+def test_stop_cancels_the_search_too(monkeypatch):
+    async def run():
+        app = parallel_app(monkeypatch)
+        first = asyncio.create_task(app.handle_text("какая погода в москве"))
+        await asyncio.sleep(0.1)
+        await app.handle_text("стоп")
+        await asyncio.sleep(0.5)
+        return first.cancelled(), app.speaker.said
+    cancelled, said = asyncio.run(run())
+    assert cancelled and "В Москве плюс пять." not in " ".join(said)
+
+
+def test_a_long_search_says_it_is_searching(monkeypatch):
+    from assistant.assistant import WAIT_PHRASES
+
+    async def run():
+        app = parallel_app(monkeypatch, delay=0.4)
+        app.cfg.voice.wait_phrase_sec = 0.1
+        await app.handle_text("какая погода в москве")
+        return app.speaker.said
+    said = asyncio.run(run())
+    assert said[0] in WAIT_PHRASES and said[1] == "В Москве плюс пять."

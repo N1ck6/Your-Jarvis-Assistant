@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 import threading
 import time
@@ -33,6 +34,12 @@ from assistant.voicepack import VoicePack, load_pack
 
 log = logging.getLogger("assistant")
 TALK_OVER_SOFT = 0.7   # "a little quieter": about -3 dB, still easy to follow
+WAIT_PHRASES = ["Ищу, сэр.", "Минуту, сэр.", "Сейчас узнаю, сэр.", "Проверяю, сэр."]
+BACKGROUND_GAP_SEC = 1.5   # a pause after the user's new request before an earlier answer is spoken
+BACKGROUND_PREFIX = "По прошлому вопросу. "
+# A new request that is about the running one: it is cancelled, not left to answer in the background.
+_CANCELS = re.compile(r"^(стоп|хватит|отмена|отмени|не надо|забудь|нет|не то|замолчи|тихо)\b|я имел в виду|"
+                      r"не (это|то) (я )?(спрашивал|просил|имел)|^(ты )?(меня )?не (понял|расслышал)")
 
 
 def resample(samples, sr: int, target: int):
@@ -115,6 +122,14 @@ async def split_notes(stream, notes: list[str]):
 
 
 class Assistant:
+    def __new__(cls, *args, **kwargs):
+        self = super().__new__(cls)
+        # Requests still waiting for their answer to start (a slow search): a new request does not cancel them, they
+        # go on in the background and speak once the user has finished the new one (_my_turn).
+        self._waiting: set[asyncio.Task] = set()
+        self._background: set[asyncio.Task] = set()
+        return self
+
     def __init__(self, cfg: Settings, ui: UiPort, *, use_mic: bool = True) -> None:
         self.cfg = cfg
         self.ui = ui
@@ -688,14 +703,72 @@ class Assistant:
         return self._clip_texts.get(key, "")
 
     # ------------------------------------------------------------------ control API (used by skills/UI)
-    def interrupt(self) -> None:
-        """Stop talking and drop the running request (except the caller itself)."""
+    def interrupt(self, background: bool = True) -> None:
+        """Stop talking and drop the running request (except the caller itself); background=True: the requests
+        left answering in the background too ("стоп", the button, the microphone off)."""
         self.interruptions += 1  # a ringing alarm stops when the user says anything to Jarvis
         self._held = None
         self.speaker.stop()
-        task = self._task
-        if task and not task.done() and task is not asyncio.current_task():
-            task.cancel()
+        tasks = [self._task, *(self._background if background else ())]
+        for task in tasks:
+            if task and not task.done() and task is not asyncio.current_task():
+                task.cancel()
+
+    def _to_background(self, task: asyncio.Task) -> None:
+        """The request is still waiting for its answer: it goes on while the user asks the next one."""
+        log.info("Прошлый запрос ещё ищет ответ: продолжаю его в фоне")
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        if self._held is task:
+            self._held = None
+            self._talk_over_again()
+
+    def _can_wait(self, task: asyncio.Task | None) -> bool:
+        return task is not None and not task.done() and task in self._waiting
+
+    async def _my_turn(self) -> None:
+        """An answer from the background speaks once the user has finished the new request (and Jarvis is not
+        speaking another answer), after a short pause to take a breath."""
+        quiet_since = None
+        while True:
+            busy = (self.state is State.LISTENING or self.speaker.speaking or self._dictating
+                    or (self.listener is not None and self.listener.mode is Mode.CAPTURE))
+            now = time.monotonic()
+            if busy:
+                quiet_since = None
+            elif quiet_since is None:
+                quiet_since = now
+            elif now - quiet_since >= BACKGROUND_GAP_SEC:
+                return
+            await asyncio.sleep(0.1)
+
+    async def _first_token(self, stream, started: float):
+        """Waits for the answer to start; says "Ищу, сэр" if that takes a while. None if the answer is empty."""
+        task = asyncio.current_task()
+        self._waiting.add(task)
+        filler = asyncio.create_task(self._wait_phrase(task))
+        try:
+            first = await stream.__anext__()
+        except StopAsyncIteration:
+            return None
+        finally:
+            self._waiting.discard(task)
+            if not filler.done() and not getattr(filler, "speaking", False):
+                filler.cancel()
+        log.info("Первый токен через %.2f с (%s)", time.perf_counter() - started, self.llm.last_provider or "-")
+        return first
+
+    async def _wait_phrase(self, task: asyncio.Task) -> None:
+        delay = self.cfg.voice.wait_phrase_sec
+        if delay <= 0:
+            return
+        await asyncio.sleep(delay)
+        if (task is self._task and self.state is State.THINKING and not self.speaker.speaking
+                and not (self.listener is not None and self.listener.mode is Mode.CAPTURE)):
+            asyncio.current_task().speaking = True   # type: ignore[attr-defined]  # let it finish the phrase
+            await self.speaker.say(random.choice(WAIT_PHRASES))
+            if task is self._task and not task.done():
+                self._set_state(State.THINKING)
 
     def set_muted(self, muted: bool) -> None:
         if not self.mic:
@@ -919,7 +992,7 @@ class Assistant:
             self._held, self._held_at = task, time.monotonic()
             self.player.duck = min(self.player.duck, 0.15)
         else:
-            self.interrupt()
+            self.interrupt(background=False)   # answers still searching in the background go on
         self._earcon(earcons.WAKE)
         self._set_state(State.LISTENING)
 
@@ -996,9 +1069,13 @@ class Assistant:
                     self._set_state(State.SPEAKING if self.speaker.speaking else State.THINKING)
 
     def _drop_held(self) -> None:
-        """The name was confirmed (a bare "Джарвис"): the request it was said over is dropped."""
+        """The name was confirmed (a bare "Джарвис"): the request it was said over is dropped, unless it is still
+        waiting for its answer: then it goes on in the background (the user is about to ask something else)."""
         if self._held is not None:
-            self.interrupt()
+            if self._can_wait(self._held):
+                self._to_background(self._held)
+            else:
+                self.interrupt(background=False)
 
     async def _wait_hold(self) -> None:
         """A wake word heard over this request is being checked: its answer waits, it may be cancelled."""
@@ -1121,25 +1198,32 @@ class Assistant:
         """Entry point for recognized speech and typed questions.
         addressed=False: heard in the hot window without the name, it may be meant for someone else."""
         if asyncio.current_task() is not self._task:
-            self.interrupt()
+            if self._can_wait(self._task) and not _CANCELS.search(normalize_command(query, strip_polite=False)):
+                self._to_background(self._task)
+            else:
+                self.interrupt(background=bool(_CANCELS.search(normalize_command(query, strip_polite=False))))
             self._task = asyncio.current_task()
         self._set_state(State.THINKING, query)
         log.info("Запрос: %s", private(query))
         self.ui.chat_add("user", query)
         started = time.perf_counter()
         listen_after = True
+        extra: list[Reply] = []
+        deferred: list = []
         try:
             reply = await self.brain.handle(query, addressed=addressed)
+            # This request's own follow-ups: another request may run alongside it (one left in the background).
+            extra, deferred = list(self.brain.extra), list(self.brain.deferred)
+            self.brain.extra.clear()
+            self.brain.deferred.clear()
             listen_after = await self._deliver(reply, started, query)
-            while self.brain.extra:
-                listen_after = await self._deliver(self.brain.extra.pop(0), started, query)
-            while self.brain.deferred:
-                skill, intent = self.brain.deferred.pop(0)
+            while extra:
+                listen_after = await self._deliver(extra.pop(0), started, query)
+            while deferred:
+                skill, intent = deferred.pop(0)
                 listen_after = await self._deliver(await skill.handle(intent), started, query)
         except asyncio.CancelledError:
             log.info("Запрос отменён")
-            self.brain.deferred.clear()
-            self.brain.extra.clear()
             raise
         except Exception as exc:
             log.exception("Ошибка обработки запроса")
@@ -1147,6 +1231,10 @@ class Assistant:
         await self._wait_hold()
         if self._task is asyncio.current_task():
             self._after_answer(listen_after, expect_answer=self.brain.expects_answer())
+        elif self._task is None or self._task.done():
+            self._after_answer(False)   # an answer from the background, nothing else running
+        elif self.state is not State.LISTENING:
+            self._set_state(State.THINKING)   # the newer request is still being worked on
 
     def progress(self, what: str) -> None:
         """A request is being worked on: the icon stays "thinking" and the tray tooltip says what is being done."""
@@ -1173,18 +1261,29 @@ class Assistant:
 
         notes: list[str] = []
         use_reaction = reply.reaction and (reply.reaction != "ok" or self.cfg.voice.ok_for_actions)
+        late = asyncio.current_task() in self._background
+        if late and reply.stream is None:
+            await self._my_turn()
+            if reply.speech:
+                reply.speech = BACKGROUND_PREFIX + reply.speech
+                use_reaction = False
         if use_reaction and await self.react(reply.reaction):
             text = f"[{reply.reaction}] {reply.speech}".strip()
         elif reply.stream is not None:
-            first = True
+            stream = reply.stream.__aiter__()
+            first = await self._first_token(stream, started)
+            prefix = ""
+            if asyncio.current_task() in self._background:
+                await self._my_turn()   # the user asked something else meanwhile: let them finish first
+                prefix = BACKGROUND_PREFIX
 
             async def timed():
-                nonlocal first
-                async for delta in reply.stream:
-                    if first:
-                        first = False
-                        log.info("Первый токен через %.2f с (%s)", time.perf_counter() - started,
-                                 self.llm.last_provider or "-")
+                if first is None:
+                    return
+                if prefix:
+                    yield prefix
+                yield first
+                async for delta in stream:
                     yield delta
                 # The model is done long before the voice is: the screen part shows while the voice explains.
                 show_card("".join(notes))

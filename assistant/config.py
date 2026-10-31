@@ -78,6 +78,7 @@ class VoicePackCfg(BaseModel):
     pack: str = "jarvis-remaster"      # recorded reactions; "none" = only synthesized speech
     greet_on_start: bool = True
     reply_on_bare_wake: bool = True    # "Слушаю, сэр" when only the wake word was said
+    wait_phrase_sec: float = 2.5       # no answer yet after this long: "Ищу, сэр" (0 = never)
     ok_for_actions: bool = True        # "Слушаюсь, сэр" instead of describing simple actions
 
 

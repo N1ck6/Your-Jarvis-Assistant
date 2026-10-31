@@ -42,7 +42,11 @@ class AudioCfg(BaseModel):
     earcons: bool = True
     earcon_volume: float = 0.25
     echo_cancellation: bool = True   # the microphone does not hear Jarvis himself (WebRTC AEC3)
-    talk_over_volume: float = 0.3    # Jarvis's voice while the user talks over him (1 = do not turn down)
+    # Someone talks over Jarvis: "soft" a little quieter, "strong" down to talk_over_volume, "pause" he stops at the
+    # next gap between words and goes on after a pause in the talk, "off" nothing. A call ("Джарвис, …") always
+    # turns him down; talk longer than 2 s without it (15 s in "pause") is not for him and is ignored.
+    talk_over: str = "soft"
+    talk_over_volume: float = 0.3    # Jarvis's voice in the "strong" mode
 
 
 class WakeCfg(BaseModel):

@@ -100,6 +100,16 @@ class ListenerCore:
         self._talk_over = False
         self._talk_over_quiet = 0
         self._talk_over_release = int(1.5 / self.frame_sec)
+        # Talk that goes on this long is not addressed to Jarvis (people discussing his answer, the TV): all clear,
+        # and the rest of the answer ignores it. None = no limit. A real call is "Джарвис, …": the wake word.
+        self.talk_over_limit: float | None = 2.0
+        self._talk_over_frames_on = 0
+        self._talk_over_ignored = False
+        # Echo left after cancellation: the share of the raw microphone level that survives it, over the last
+        # seconds of Jarvis's speech (the median: most of that time nobody talks over him). Loud speakers distort
+        # and the canceller leaves more, sounding like speech; a voice must stand this far above that share.
+        self._leak: collections.deque[float] = collections.deque(maxlen=int(8.0 / self.frame_sec))
+        self.talk_over_margin_db = 8.0
         self._lock = threading.RLock()
         self._segment: collections.deque[np.ndarray] = collections.deque(maxlen=self.segment_cap)
         self._in_speech = False
@@ -226,10 +236,12 @@ class ListenerCore:
             self._history.append(frame)
             # Echo left after cancellation is ~-55 dB; a voice the canceller muted at the start of double talk is
             # still well above that even when the VAD misses it.
-            near = voiced or float(np.sqrt(np.mean(frame.astype(np.float32) ** 2))) > self.near_rms
+            level = float(np.sqrt(np.mean(frame.astype(np.float32) ** 2)))
+            near = voiced or level > self.near_rms
             self._near_voiced.append(near)
             if raw is not None:
-                self._track_talk_over(prob >= max(self.th, self.talk_over_prob))
+                over_echo = self._above_echo(level, raw)
+                self._track_talk_over(prob >= max(self.th, self.talk_over_prob) and over_echo)
             if raw is not None and self.mode is Mode.WAIT:
                 if self.assistant_speaking:
                     self._raw_active = True
@@ -258,22 +270,54 @@ class ListenerCore:
                 self._process_dictate(frame, voiced)
             self.pre_roll.append(frame)
 
+    def _above_echo(self, level: float, raw: np.ndarray) -> bool:
+        """The cleaned level is a voice, not the echo the canceller left: it is louder than noise and a bigger share
+        of the raw level than the echo usually keeps (the echo follows Jarvis's own loudness, a voice does not)."""
+        raw_level = float(np.sqrt(np.mean(raw.astype(np.float32) ** 2)))
+        share = level / max(raw_level, 1.0)
+        if self.assistant_speaking and raw_level > 2 * self.near_rms:   # mostly Jarvis in the microphone
+            self._leak.append(share)
+        if level < self.near_rms:
+            return False
+        if len(self._leak) < 20:
+            need = 0.5           # nothing measured yet: only a voice clearly over the echo
+        else:
+            need = min(0.8, float(np.median(self._leak)) * 10 ** (self.talk_over_margin_db / 20))
+        return share >= need
+
     def _track_talk_over(self, speech: bool) -> None:
         """A voice in the cleaned signal while Jarvis talks: tell the assistant (it turns Jarvis down) after ~0.2 s
-        of clear speech; all clear after 1.5 s without it or when Jarvis stops."""
+        of clear speech; all clear after 1.5 s without it, when Jarvis stops, or when the talk goes on past
+        talk_over_limit (then it is not for him, and the rest of the answer ignores it)."""
+        if not self.assistant_speaking:
+            self._talk_over_ignored = False
         self._talk_voiced.append(speech)
-        if self.assistant_speaking and sum(self._talk_voiced) >= self.talk_over_frames:
+        if self.assistant_speaking and not self._talk_over_ignored and sum(self._talk_voiced) >= self.talk_over_frames:
             self._talk_over_quiet = 0
             if not self._talk_over:
                 self._talk_over = True
+                self._talk_over_frames_on = 0
                 if self.ev.on_talk_over is not None:
                     self.ev.on_talk_over(True)
         elif self._talk_over:
             self._talk_over_quiet = 0 if speech else self._talk_over_quiet + 1
             if not self.assistant_speaking or self._talk_over_quiet >= self._talk_over_release:
-                self._talk_over = False
-                if self.ev.on_talk_over is not None:
-                    self.ev.on_talk_over(False)
+                self._end_talk_over()
+        if self._talk_over:
+            self._talk_over_frames_on += 1
+            if self.talk_over_limit is not None and self._talk_over_frames_on * self.frame_sec >= self.talk_over_limit:
+                log.info("Разговор поверх ответа дольше %.0f с: не ко мне, не убавляю", self.talk_over_limit)
+                self._talk_over_ignored = True
+                self._end_talk_over()
+
+    def _end_talk_over(self) -> None:
+        self._talk_over = False
+        if self.ev.on_talk_over is not None:
+            self.ev.on_talk_over(False)
+
+    @property
+    def talking_over(self) -> bool:
+        return self._talk_over
 
     def _process_wait(self, frame: np.ndarray, voiced: bool) -> None:
         if voiced:

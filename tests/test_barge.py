@@ -15,6 +15,7 @@ from assistant.stt import SttResult
 
 class FakeListener:
     mode = Mode.WAIT
+    talking_over = False
 
     def __init__(self):
         self.calls = []
@@ -58,7 +59,8 @@ def make_app(heard):
     app.speaker = type("Speaker", (), {"stop": lambda self: None, "speaking": False, "last_text": "",
                                        "recent_text": lambda self: ""})()
     app.cues = []
-    app.player = type("Player", (), {"effect": lambda self, clip, vol: app.cues.append(clip), "duck": 1.0})()
+    app.player = type("Player", (), {"effect": lambda self, clip, vol: app.cues.append(clip), "duck": 1.0,
+                                     "release": lambda self: setattr(self, "duck", 1.0)})()
     app.stt = type("Stt", (), {"recognize": lambda self, audio: SttResult(heard, logprobs=[-0.05])})()
     app.brain = FakeBrain()
     app.pack = None

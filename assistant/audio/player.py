@@ -117,18 +117,93 @@ def resolve_device(spec: str, kind: str) -> int | None:
     return None
 
 
+class _Speech:
+    """A speech clip as the output callback reads it. The volume follows Player.duck smoothly (a jump is heard as
+    a click and draws attention); Player.hold pauses it at the next gap between words and it resumes from there."""
+
+    DOWN_SEC, UP_SEC = 0.08, 0.4      # how long a full turn down / back up takes
+    FADE_SEC = 0.01
+    SEEK_SEC = 1.0                    # a gap between words is looked for this far ahead, else the quietest point
+
+    def __init__(self, player: "Player", data: np.ndarray, sr: int) -> None:
+        self.player, self.data, self.sr = player, data, sr
+        self.pos = 0
+        self.paused = False
+        self._cut: int | None = None
+        self._blk = max(1, sr // 100)
+        n = len(data) // self._blk
+        self._rms = np.sqrt(np.mean(data[:n * self._blk].reshape(n, self._blk) ** 2, axis=1)) if n else np.zeros(0)
+        self._quiet = 0.15 * float(np.percentile(self._rms, 95)) if n else 0.0
+
+    def _gap(self) -> int:
+        """Where to stop for a pause: the next quiet 10 ms (between words), or the quietest point within a second."""
+        b = self.pos // self._blk + 1
+        window = self._rms[b:b + int(self.SEEK_SEC * 100)]
+        if not len(window):
+            return len(self.data)
+        quiet = np.flatnonzero(window <= self._quiet)
+        i = int(quiet[0]) if len(quiet) else int(np.argmin(window))
+        return min(len(self.data), (b + i) * self._blk + self._blk // 2)
+
+    def read(self, frames: int) -> tuple[np.ndarray, bool]:
+        """The next `frames` samples (silence while paused) and whether the clip is over."""
+        out = np.zeros(frames, np.float32)
+        player = self.player
+        resumed = False
+        if self.paused:
+            if player.hold:
+                return out, False
+            self.paused, resumed = False, True
+        end = min(self.pos + frames, len(self.data))
+        stop_here = False
+        if player.hold:
+            if self._cut is None:
+                self._cut = self._gap()
+            if self._cut < len(self.data) and self._cut <= end:
+                end, stop_here = max(self._cut, self.pos), True
+        else:
+            self._cut = None
+        chunk = self.data[self.pos:end].copy()
+        n = len(chunk)
+        if n:
+            g0, target = player.gain, max(0.0, min(1.0, player.duck))
+            step = n / (self.sr * (self.DOWN_SEC if target < g0 else self.UP_SEC))
+            g1 = g0 + max(-step, min(step, target - g0))
+            if g0 < 1.0 or g1 < 1.0:
+                chunk *= np.linspace(g0, g1, n, dtype=np.float32)
+            player.gain = g1
+            f = min(n, int(self.FADE_SEC * self.sr))
+            if resumed:
+                chunk[:f] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
+            if stop_here:
+                chunk[n - f:] *= np.linspace(1.0, 0.0, f, dtype=np.float32)
+        out[:n] = chunk
+        self.pos = end
+        if stop_here:
+            self.paused, self._cut = True, None
+            return out, False
+        return out, self.pos >= len(self.data)
+
+
 class Player:
     def __init__(self, device: str = "", volume: float = 1.0, on_level: Callable[[float], None] | None = None) -> None:
         self.device_spec = device
         self.device = resolve_device(device, "output")
         self.volume = volume
         self.duck = 1.0          # live share of the volume: lowered while the user talks over Jarvis
+        self.gain = 1.0          # the share applied right now: follows `duck` smoothly
+        self.hold = False        # speech pauses at the next gap between words until this is cleared
         self.on_level = on_level
         self._stop = threading.Event()
         self._lock = threading.Lock()  # one speech clip at a time
 
     def stop(self) -> None:
         self._stop.set()
+
+    def release(self) -> None:
+        """Full volume, no pause (the answer is over or the user is done)."""
+        self.duck = 1.0
+        self.hold = False
 
     def refresh_device(self) -> None:
         """After PortAudio re-read the devices, indexes may have moved: resolve the configured one again."""
@@ -150,6 +225,7 @@ class Player:
 
         data = np.clip(clip.samples.astype(np.float32) * volume, -1.0, 1.0)
         ref = REFERENCE.stream()   # what goes to the speakers, for the echo canceller
+        speech = _Speech(self, data, clip.sr) if duckable else None
         pos = 0
         done = threading.Event()
         interrupted = False
@@ -160,9 +236,16 @@ class Player:
                 interrupted = True
                 outdata.fill(0)
                 raise sd.CallbackStop
+            if speech is not None:
+                out, over = speech.read(frames)
+                outdata[:, 0] = out
+                ref.write(out, clip.sr)
+                if on_level is not None:
+                    on_level(float(np.sqrt(np.mean(out * out))))
+                if over:
+                    raise sd.CallbackStop
+                return
             chunk = data[pos:pos + frames]
-            if duckable and self.duck < 1.0:
-                chunk = chunk * self.duck
             n = len(chunk)
             outdata[:n, 0] = chunk
             if n:

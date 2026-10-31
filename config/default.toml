@@ -35,7 +35,10 @@ earcon_volume = 0.25
 # The microphone stops hearing Jarvis himself: "Джарвис, …" said over his answer is heard and the command is not
 # drowned in his voice (scripts/bargein_bench.py: 62% -> 90-95% caught at equal loudness).
 echo_cancellation = true
-# While the user talks over Jarvis, his voice drops to this share until the user is done (1 = never).
+# Someone talks over Jarvis: "soft" — a little quieter, "strong" — down to talk_over_volume, "pause" — he stops at
+# the next gap between words and goes on after the talk, "off" — nothing. "Джарвис, …" always turns him down;
+# talk longer than 2 s without the name (15 s in "pause") is taken for a conversation and ignored.
+talk_over = "soft"
 talk_over_volume = 0.3
 
 [wake]

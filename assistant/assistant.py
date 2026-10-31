@@ -32,6 +32,7 @@ from assistant.tts.manager import TtsManager
 from assistant.voicepack import VoicePack, load_pack
 
 log = logging.getLogger("assistant")
+TALK_OVER_SOFT = 0.7   # "a little quieter": about -3 dB, still easy to follow
 
 
 def resample(samples, sr: int, target: int):
@@ -426,23 +427,38 @@ class Assistant:
 
     def _on_speech_start(self) -> None:
         if self.listener:
+            # Talk this long without "Джарвис" is a conversation, not a call (the pause waits longer for it).
+            self.listener.talk_over_limit = 15.0 if self.cfg.audio.talk_over == "pause" else 2.0
             self.listener.assistant_speaking = True
         self._set_state(State.SPEAKING)
 
     def _on_talk_over(self, talking: bool) -> None:
-        """The user talks over Jarvis (listener thread): his voice goes down at once so the rest of the phrase,
-        maybe "Джарвис, …", is heard over less echo; back up when the user is done."""
+        """Someone talks over Jarvis (listener thread): a little quieter, much quieter or a pause (the setting),
+        so the rest of the phrase, maybe "Джарвис, …", is heard over less echo; back when the talk is over."""
         if self._held is not None:
             return  # a wake word over the answer is being checked: the voice stays down until it is
+        if not talking:
+            self.player.release()
+            return
         aec = self.mic.aec if self.mic else None
-        if talking and (aec is None or not aec.adapted):
+        if aec is None or not aec.adapted:
             return  # the first seconds the canceller lets echo through: that is not the user
-        self.player.duck = max(0.0, min(1.0, self.cfg.audio.talk_over_volume)) if talking else 1.0
+        mode = self.cfg.audio.talk_over
+        if mode == "pause":
+            self.player.hold = True
+        elif mode in ("soft", "strong"):
+            self.player.duck = TALK_OVER_SOFT if mode == "soft" else max(0.0, min(1.0, self.cfg.audio.talk_over_volume))
+
+    def _talk_over_again(self) -> None:
+        """The wake word check is over: back to what the talk in the room asks for now."""
+        self.player.release()
+        if self.listener and self.listener.talking_over:
+            self._on_talk_over(True)
 
     def _on_speech_end(self) -> None:
         if self.listener:
             self.listener.assistant_speaking = False
-        self.player.duck = 1.0
+        self.player.release()
 
     def apply_settings(self, changes: dict) -> list[str]:
         """Saves changes, updates the live settings; returns the keys that need a restart."""
@@ -833,7 +849,7 @@ class Assistant:
         finally:
             if self._held is held:
                 self._held = None
-                self.player.duck = 1.0
+                self._talk_over_again()
                 if not held.done():
                     log.info("Имя не подтвердилось: продолжаю прежний запрос")
                     self._set_state(State.SPEAKING if self.speaker.speaking else State.THINKING)
@@ -848,7 +864,7 @@ class Assistant:
         while self._held is not None and self._held is asyncio.current_task():
             if time.monotonic() - self._held_at > 20:
                 self._held = None   # never resolved (a lost utterance): go on
-                self.player.duck = 1.0
+                self._talk_over_again()
                 break
             await asyncio.sleep(0.05)
 

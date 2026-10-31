@@ -197,6 +197,8 @@ autostart = false
 hud = false
 # Once a day ask GitHub whether there is a newer version (only a notification, nothing is installed).
 check_updates = true
+# A new commit in Jarvis's folder (an edit, git pull): he restarts by himself, silently, when idle.
+restart_on_update = true
 
 [privacy]
 # Write what you say and what Jarvis answers into data/logs: auto = only when started with a console

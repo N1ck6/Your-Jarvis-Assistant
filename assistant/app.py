@@ -127,6 +127,9 @@ def main() -> None:
     parser.add_argument("--wait-lock", action="store_true", help=argparse.SUPPRESS)  # used by restart
     # Started with Windows (the Startup shortcut): no greeting, nothing spoken until the user calls.
     parser.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)
+    # Restarted by itself on new code (selfupdate): silent, with a notification about what changed.
+    parser.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--updated", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -155,6 +158,7 @@ def main() -> None:
         ui = ConsoleUi()
         assistant = Assistant(cfg, ui, use_mic=not args.text)
         assistant.quiet_start = _quiet_start(args, cfg)
+        assistant.updated = args.updated
         core = CoreThread(assistant)
         done = threading.Event()
         assistant.on_exit = done.set
@@ -184,6 +188,7 @@ def main() -> None:
     ui = QtUi(cfg.explain.linger_sec)
     assistant = Assistant(cfg, ui)
     assistant.quiet_start = _quiet_start(args, cfg)
+    assistant.updated = args.updated
     core = CoreThread(assistant)
 
     def quit_app() -> None:
@@ -213,7 +218,7 @@ def _quiet_start(args, cfg: Settings) -> bool:
             autostart.set_enabled(True)
         except Exception as exc:
             log.warning("Ярлык автозапуска не обновлён: %s", exc)
-    return args.autostart or winutil.uptime_sec() < 180
+    return args.autostart or args.quiet or winutil.uptime_sec() < 180
 
 
 def _voicelab_only(cfg: Settings) -> None:

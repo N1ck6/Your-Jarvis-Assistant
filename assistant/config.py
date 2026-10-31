@@ -177,6 +177,7 @@ class UiCfg(BaseModel):
     autostart: bool = False         # a shortcut in the Startup folder (Settings -> Основное)
     hud: bool = False               # the animated orb that shows what Jarvis is doing
     check_updates: bool = True      # once a day: is there a newer version on GitHub
+    restart_on_update: bool = True  # a new commit in the folder (an edit, git pull): restart when idle
 
 
 class PrivacyCfg(BaseModel):

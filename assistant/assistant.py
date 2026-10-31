@@ -121,12 +121,14 @@ class Assistant:
         self.use_mic = use_mic
         self.loop: asyncio.AbstractEventLoop | None = None
         self.state = State.IDLE
+        self._state_at = time.monotonic()
         # Called on every state change in the loop thread (the browser extension's icon follows it).
         self.state_listeners: list[Callable[[State], None]] = []
         self.voicelab_url = f"http://{cfg.voicelab.host}:{cfg.voicelab.port}/"
         self.on_exit: Callable[[], None] = lambda: None
         # Started with Windows: no greeting and nothing spoken at startup (missed reminders go to the tray).
         self.quiet_start = False
+        self.updated = False     # restarted by itself on new code: say so in a notification
 
         self.dialog = Dialog(cfg.assistant.dialog_ttl_sec, cfg.assistant.dialog_max_turns)
         self.llm = LlmHub(cfg.llm)
@@ -231,11 +233,18 @@ class Assistant:
         self._watch_devices()
         asyncio.create_task(self._watch_skills())
         asyncio.create_task(self._check_updates())
+        asyncio.create_task(self._watch_code())
         if self.pack is None and self.cfg.voice.pack != "none":
             asyncio.create_task(self._fetch_packs())
         self._set_state(State.IDLE)
         self._ready.set()
         log.info("Готов. Скажите «%s» и команду.", self.cfg.assistant.name)
+        if self.updated:
+            from assistant import selfupdate
+            from assistant.paths import ROOT
+
+            what = await asyncio.to_thread(selfupdate.subject, ROOT)
+            self.ui.notify("Джарвис обновлён", what[:200] or "Перезапущен с новым кодом")
         if self.cfg.voice.greet_on_start and self.pack and not self.quiet_start:
             clip = self.pack.greeting()
             if clip:
@@ -290,6 +299,44 @@ class Assistant:
             if news:
                 self.ui.notify("Обновление Джарвиса", f"На GitHub {news}")
             await asyncio.sleep(6 * 3600)
+
+    def idle_for(self) -> float:
+        """Seconds Jarvis has been doing nothing (0 while he listens, thinks, speaks, dictates or plays music)."""
+        busy = (self.state not in (State.IDLE, State.MUTED) or self.speaker.speaking or self._dictating
+                or (self._task is not None and not self._task.done())
+                or getattr(self.music, "state", "stopped") == "playing")
+        return 0.0 if busy else time.monotonic() - self._state_at
+
+    async def _watch_code(self) -> None:
+        """A new commit in Jarvis's folder (an edit, a git pull): restart on it once he has been idle a while."""
+        from assistant import selfupdate
+        from assistant.paths import ROOT
+
+        seen = await asyncio.to_thread(selfupdate.head, ROOT)
+        if seen is None:
+            return   # not a git checkout (an installed build)
+        failed = None
+        while True:
+            await asyncio.sleep(5)
+            now = await asyncio.to_thread(selfupdate.head, ROOT)
+            if not self.cfg.ui.restart_on_update or now in (None, seen, failed):
+                continue
+            log.info("Новый код (%s): перезапущусь, когда буду свободен", now[:7])
+            while self.idle_for() < 20:
+                await asyncio.sleep(2)
+            latest = await asyncio.to_thread(selfupdate.head, ROOT)
+            if latest != now:
+                continue     # another commit came while waiting: check that one
+            error = await asyncio.to_thread(selfupdate.check, ROOT)
+            if error:
+                failed = now
+                log.error("Новый код не запускается, остаюсь на прежнем: %s", error)
+                self.ui.notify("Джарвис не обновился", f"В новом коде ошибка: {error[:180]}")
+                continue
+            if self.idle_for() < 5:
+                continue     # the user called him during the check
+            self.restart(quiet=True, updated=True)
+            return
 
     # ------------------------------------------------------------------ skills
     async def reload_skills(self) -> list[str]:
@@ -415,6 +462,7 @@ class Assistant:
             # the tray icon and its menu item would then say the opposite of the truth.
             state = State.MUTED
         self.state = state
+        self._state_at = time.monotonic()
         # Music steps aside while Jarvis listens, thinks or talks.
         self.music.duck(state in (State.LISTENING, State.THINKING, State.SPEAKING))
         self.ui.set_state(state, detail)
@@ -512,8 +560,9 @@ class Assistant:
         if spec.engine == "clone":
             self.tts.release("silero")  # it only spoke while the clone was loading
 
-    def restart(self) -> None:
-        """Starts a fresh instance (it waits for this one to release the lock) and exits."""
+    def restart(self, quiet: bool = False, updated: bool = False) -> None:
+        """Starts a fresh instance (it waits for this one to release the lock) and exits. quiet: no greeting;
+        updated: it says in a notification that it runs the new code."""
         import subprocess
         import sys
 
@@ -521,6 +570,7 @@ class Assistant:
 
         exe = ROOT / ".venv" / "Scripts" / "pythonw.exe"
         cmd = [str(exe) if exe.exists() else sys.executable, "-m", "assistant", "--wait-lock"]
+        cmd += ["--quiet"] * quiet + ["--updated"] * updated
         subprocess.Popen(cmd, cwd=str(ROOT), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
                          | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         log.info("Перезапуск")

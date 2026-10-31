@@ -23,7 +23,7 @@ class AssistantCfg(BaseModel):
     language: str = "ru"
     default_city: str = "Москва"
     hot_window_sec: float = 8.0
-    dialog_ttl_sec: float = 180
+    dialog_ttl_sec: float = 600
     dialog_max_turns: int = 6
 
 
@@ -111,7 +111,7 @@ class RouterCfg(BaseModel):
     enabled: bool = True
     provider: str = "auto"          # auto (local if running, else cloud) | local | cloud
     model: str = ""                 # small local model just for routing ("" = the main local model)
-    context_turns: int = 4
+    context_turns: int = 6
     timeout_sec: float = 6.0
     cache_fresh_min: int = 20       # answers about fresh data (rates, news)
     cache_stable_days: int = 14     # answers about stable facts (definitions)

@@ -22,4 +22,7 @@ phrase = [
     { text = "реши 2 плюс 2", skill = "calc", action = "calc" },
     { text = "посчитай 5 умножить на 3", skill = "calc", action = "calc" },
     { text = "реши капчу", skill = "none", action = "none" },
+    { text = "помоги с домашкой", action = "auto" },
+    { text = "сделай домашку", action = "auto" },
+    { text = "помоги мне с задачей на экране", action = "screen" },
 ]

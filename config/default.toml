@@ -10,7 +10,7 @@ default_city = "Москва"
 # Seconds after an answer during which you can speak without the wake word.
 hot_window_sec = 8.0
 # Dialog context is forgotten after this many seconds of silence.
-dialog_ttl_sec = 180
+dialog_ttl_sec = 600
 dialog_max_turns = 6
 
 [audio]
@@ -121,7 +121,8 @@ temperature = 0.6
 enabled = true
 # auto = local model if Ollama runs, otherwise the cloud chain (costs tokens) | local | cloud
 provider = "auto"
-context_turns = 4
+# Recent requests the router sees: «а если…», «в прошлый раз я спрашивал…» are understood from them.
+context_turns = 6
 timeout_sec = 6.0
 # Cached cloud answers: fresh data (rates, news) and stable facts (definitions).
 cache_fresh_min = 20

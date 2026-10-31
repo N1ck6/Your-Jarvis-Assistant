@@ -38,6 +38,12 @@ PROMPT = """Ты — маршрутизатор голосового ассис�
 4) "ignore" — обрывок, бессмыслица, одно невнятное слово или фраза явно не ассистенту (разговор с другим человеком,
    звук телевизора). Никогда не угадывай команду по невнятному слову.
 Для "web" и "chat" в query перепиши запрос самодостаточно, с учётом прошлых реплик (замени «он», «это» и т. п.).
+Поправка или изменение прошлого запроса («не то, я имел в виду…», «а если…», «а что если…», «то же самое, но…»,
+«а теперь про…», «в прошлый раз я спрашивал…, а теперь…»): повтори прошлый запрос целиком, изменив только то, что
+просят: в новом запросе те же слова прошлого, кроме изменённой части. Была команда — ровно одна такая же
+команда с новыми значениями (К+). Был вопрос — тот же вопрос, где заменено только изменённое (W/F/C); это запрос,
+а не ответ на него. Схема: «<вопрос> про X», затем «а если Y» → «<тот же вопрос> про Y»; «<команда> N», затем
+«то же самое, но M» → К+: <та же команда> M.
 
 Команды:
 {catalog}
@@ -72,6 +78,10 @@ class Decision:
 class Turn:
     text: str       # what the user said
     did: str        # what Jarvis did / answered (short)
+    kind: str = ""  # command | answer; "" for a reply to Jarvis's own question ("да")
+    meta: bool = False   # about another request ("не то", "ещё раз", "спасибо"): not a request of its own
+    asked: str = ""      # the question as the router rewrote it, if it did ("а в Казани?" -> "погода в Казани")
+    at: float = field(default_factory=time.monotonic)
 
 
 def _parse(raw: str) -> dict | None:
@@ -193,7 +203,9 @@ class Router:
             return ["local"]
         return [p for p in self.app.cfg.llm.info_chain if p != "local"] or ["local"]
 
-    async def route(self, text: str, turns: list[Turn], addressed: bool = True) -> Decision | None:
+    async def route(self, text: str, turns: list[Turn], addressed: bool = True,
+                    revise: Turn | None = None) -> Decision | None:
+        """revise: the request that `text` corrects ("не то, я имел в виду …"); it is done again with the correction."""
         cfg = self.app.cfg.router
         if not cfg.enabled:
             return None
@@ -201,6 +213,9 @@ class Router:
         how = ("Пользователь обратился по имени." if addressed else
                "Фраза прозвучала сразу после ответа ассистента БЕЗ обращения по имени: если она не похожа на "
                "продолжение разговора с ассистентом или на команду ему — kind \"ignore\".")
+        if revise is not None:
+            how += (f"\nЭто поправка к запросу «{revise.asked or revise.text}»: выполни его заново целиком с учётом "
+                    "поправки (одна команда с новыми значениями или полный вопрос), а не одну поправку.")
         messages = [Msg("system", PROMPT.format(catalog=self.catalog())),
                     Msg("user", f"Последние запросы:\n{history}\n\n{how}\nНовый запрос: «{text}»")]
         chain = self._provider_chain()

@@ -1,7 +1,7 @@
 # Where the task is, is decided in main.py (match): the action names the source. Everything else is a prompt
 # command: the cloud model solves, the answer is shown as "Решение" and "Ответ" in two windows.
 examples = ["реши задачу с экрана", "реши выделенную задачу", "реши эту задачу", "реши задачу <условие задачи>",
-            "найди икс <уравнение>"]
+            "найди икс <уравнение>", "помоги с домашкой"]
 
 # Shared by every command below.
 [defaults]
@@ -36,3 +36,21 @@ source = "said"
 action = "auto"
 source = "auto"
 recent_sec = "@region_ttl_sec"
+
+# After a solution: "а если скорость 80?", "то же самое, но для пяти рабочих", "реши заново", "проверь" — the same
+# task again with every change asked since (main.py: followup). Works for followup_sec of [config].
+[[command]]
+action = "revise"
+source = "previous"
+prompt = "revise"
+say_first = "Пересчитываю. "
+
+# "почему так?", "объясни решение", "как ты это получил": the last solution step by step, in a window.
+[[command]]
+action = "explain"
+source = "previous"
+prompt = "explain"
+output = "card"
+title = "Как решал"
+say_first = "Объясняю. "
+reply = "Расписал решение по шагам на экране."

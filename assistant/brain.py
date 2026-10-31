@@ -15,7 +15,7 @@ from assistant.llm.hub import FAIL_TEXT
 from assistant.llm.providers import LocalTurn, Msg
 from assistant.log import private
 from assistant.nlu import NO, YES, looks_like_command, normalize_command, split_compound
-from assistant.router import Router, Turn
+from assistant.router import Decision, Router, Turn
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
 if TYPE_CHECKING:
@@ -87,7 +87,16 @@ _ELLIPSIS = re.compile(r"\s(?:и|а|а потом|потом|затем|а та�
                        r"еще одн\w*|еще|тоже|также|то же самое|в|во|на|через|для|про)\s")
 CONFIRM_TTL_SEC = 20
 # Commands about other commands: they never become "the last action".
-_META = {"again", "repeat", "stop", "wrong", "undo", "thanks"}
+_META = {"again", "repeat", "stop", "wrong", "undo", "thanks", "recall", "recall_more", "history", "correct",
+         "rerun"}
+# Not noted as a turn at all: a look into the history, and a correction (the corrected request is noted instead).
+_UNNOTED = {"recall", "recall_more", "history", "correct", "rerun"}
+# After "какой был мой прошлый запрос": "давай ещё раз", "повтори его" run that request again.
+_RERUN = re.compile(r"^(?:да |давай |ну )*(?:повтори|выполни|сделай|запусти|спроси|давай)(?: (?:его|ее|это|этот запрос|"
+                    r"запрос|вопрос|его снова|снова|заново|еще раз|опять))+$|^(?:да |давай )?(?:еще раз|снова|заново)$|^да$")
+# "да, только для Казани", "то же самое, но завтра": that request again with a change.
+_RERUN_WITH = re.compile(r"^(?:да |давай )*(?:(?:то же самое|тоже самое|то же|так же|его|это|повтори|сделай|выполни)"
+                         r"(?: но| только)?|только|но)\s+(?P<change>.+)$")
 
 
 def _chain_undo(undos: list) -> Callable[[], Awaitable[Reply]]:
@@ -108,6 +117,12 @@ ASK_INTERNET = Tool("ask_internet", "Найти свежую информаци�
 
 async def _once(text: str) -> AsyncIterator[str]:
     yield text
+
+
+def _history_deck(text: str):
+    from assistant.core import Card, Deck
+
+    return Deck(title="Ваши последние запросы", cards=[Card("", text, "")], done=True, pinned=True)
 
 
 class Dialog:
@@ -165,8 +180,10 @@ class Brain:
         self.last_undo: Callable[[], Awaitable[Reply]] | None = None
         self.last_route: tuple[str, str] | None = None     # (normalized phrase, skill | phrasebook | router)
         self.last_answer_key = ""                            # cache key of the last cloud answer
-        # Last few requests and what was done: context for the router and "ещё раз".
-        self.turns: deque[Turn] = deque(maxlen=6)
+        # Recent requests and what was done: context for the router, "какой был мой прошлый запрос", corrections.
+        self.turns: deque[Turn] = deque(maxlen=20)
+        # "а до этого?" after a recall: how far back the last one went, and the newest turn at that moment.
+        self._recall: tuple[int, Turn | None] = (0, None)
         self.last_command: tuple[Skill, Intent] | None = None
         # Replies of a compound command that must be spoken after the main one.
         self.extra: list[Reply] = []
@@ -253,12 +270,25 @@ class Brain:
             reply = await undo()
             log.info("Отменено: %s", reply.speech or "-")
             tail = " Эту формулировку я забыл, скажите иначе." if forgot else ""
-            return Reply((reply.speech or "Отменил.") + tail, listen_after=forget)
+            return Reply((reply.speech or "Отменил.") + tail, listen_after=forget,
+                         ask=self._correction_of_last() if forget else None)
         if forgot:
-            return Reply("Понял, эту формулировку забыл. Скажите иначе.")
+            return Reply("Понял, эту формулировку забыл. Скажите иначе.", ask=self._correction_of_last())
         if forget:
-            return Reply("Уточните, что вы имели в виду.")
+            return Reply("Уточните, что вы имели в виду.", ask=self._correction_of_last())
         return Reply("Здесь нечего отменять.", listen_after=False)
+
+    def _correction_of_last(self) -> Callable[[str], Awaitable[Reply | None]] | None:
+        """After "не то": the next phrase ("про язык программирования") is that request done again with it."""
+        reqs = self.requests()
+        if not reqs:
+            return None
+        base = reqs[-1]
+
+        async def fix(phrase: str) -> Reply | None:
+            return await self.correct(phrase, base)
+
+        return fix
 
     async def _resolve_pending(self, text: str) -> Reply | None:
         """Answers a pending "are you sure?" question; None if the phrase is something else."""
@@ -285,12 +315,16 @@ class Brain:
         addressed=False: the phrase came without the name (hot window), the router may decide it was not for Jarvis."""
         confirmed = await self._resolve_pending(text)
         if confirmed is not None:
-            self._note(text, confirmed.speech or "подтверждено")
+            self._note(text, confirmed.speech or "подтверждено", meta=True)
             return confirmed
         answered = await self._resolve_ask(text)
         if answered is not None:
-            self._note(text, answered.speech or "уточнено")
+            self._note(text, answered.speech or "уточнено", meta=True)
             return answered
+        return await self._handle(text, addressed)
+
+    async def _handle(self, text: str, addressed: bool = True, revise: Turn | None = None) -> Reply:
+        """revise: the earlier request this phrase corrects ("не то, я имел в виду …", "да, только для Казани")."""
         norm = normalize_command(text)
 
         # Compound first: otherwise "закрой браузер и включи музыку" becomes one "закрой <...>".
@@ -304,10 +338,16 @@ class Brain:
         fallback: Reply | None = None
         decision = None
         hit = self.match_skill(text)
+        prev = self.last_command
+        # Follow-ups to the previous command ("а завтра?", "а если скорость 80?") are resolved by its own skill;
+        # some skills take them even over another module ("неправильно" after a solution is not "не то").
+        follow = self._followup(prev, norm, text, hit)
+        if follow is not None:
+            return await self._run_commands(text, [follow])
         if _ELLIPSIS.search(norm) and not (hit and hit[1].action.endswith("_many")):
             # "поставь будильник на 7 и другой на 8", "погода в Москве и в Питере": a module would serve only the
             # first half. The model splits it into commands; one command or a question -> the usual path.
-            decision = await self.router.route(text, list(self.turns), addressed=addressed)
+            decision = await self.router.route(text, list(self.turns), addressed=addressed, revise=revise)
             if decision and decision.kind == "commands" and len(decision.commands) > 1:
                 hits = [self.match_skill(c) for c in decision.commands]
                 if all(hits):
@@ -319,17 +359,11 @@ class Brain:
                 return reply
             log.info("Модуль %s не справился, спрашиваю маршрутизатор", hit[0].name)
             fallback = reply
-
-        # Short follow-ups to the previous command ("а завтра?", "а в Сочи?") are resolved by its own skill.
-        if self.last_command is not None and len(norm.split()) <= 5:
-            skill, last = self.last_command
-            follow = skill.followup(norm, last)
+            follow = self._followup(prev, norm, text, None)
             if follow is not None:
-                follow.text, follow.raw = norm, text
-                log.info("Уточнение к %s.%s: %s", skill.name, follow.action, private(follow.slots))
-                return await self._run_commands(text, [(skill, follow)])
+                return await self._run_commands(text, [follow])
 
-        learned = self.router.learned(norm)
+        learned = self.router.learned(norm) if revise is None else None
         if learned:
             hits = [self.match_skill(c) for c in learned]
             if all(hits):
@@ -338,7 +372,7 @@ class Brain:
             self.router.forget(norm)
 
         if decision is None:
-            decision = await self.router.route(text, list(self.turns), addressed=addressed)
+            decision = await self.router.route(text, list(self.turns), addressed=addressed, revise=revise)
         if decision and decision.kind == "ignore" and fallback is None:
             if addressed:
                 return Reply("Не расслышал, повторите.")
@@ -352,20 +386,26 @@ class Brain:
             hits = [self.match_skill(c) for c in decision.commands]
             if all(hits):
                 log.info("Маршрутизатор: «%s» → %s", private(norm), decision.commands)
-                if not decision.context:
+                if not decision.context and revise is None:
                     self.router.learn(norm, decision.commands)
                 return await self._run_commands(text, hits, "router")  # type: ignore[arg-type]
             log.info("Маршрутизатор предложил неизвестные команды %s, отвечаю как на вопрос", decision.commands)
-            decision = None
+            # one "command" that is no command is still the request rewritten with its context
+            # ("а если на питоне" -> "как отсортировать список в python"): it is asked as the question
+            decision = (Decision("chat", query=decision.commands[0])
+                        if len(decision.commands) == 1 and (decision.context or revise is not None) else None)
         if fallback is not None:
             return fallback
 
         if decision is None or decision.kind == "ignore":
-            kind, query, fresh = ("web" if is_info_question(text) else "chat"), text, True
+            base = (revise.asked or revise.text) if revise is not None else text
+            kind, query, fresh = ("web" if is_info_question(base) else "chat"), text, True
+            if revise is not None:   # no router: the model gets the earlier request and the correction together
+                query = f"{base} (поправка: {text})"
         else:
             kind, query, fresh = decision.kind, decision.query or text, decision.fresh
         self.last_undo, self.last_route = None, (norm, "answer")
-        shown = self.app.show_visual_for(text)  # "что значит двойная связь": a molecule picture next to the answer
+        shown = self.app.show_visual_for(query if revise is not None else text)  # a molecule picture next to it
         picture = shown.kind if shown is not None else ""
         if kind == "web":
             log.info("Маршрут: облако (%s)", private(query))
@@ -373,7 +413,10 @@ class Brain:
         log.info("Маршрут: локальная модель")
         history = self.app.dialog.messages()
         self.app.dialog.add("user", text)
-        return Reply(stream=self._record(text, self._local_agent(history, text, picture)))
+        # what the phrase means with its context: "а если на питоне" alone means little to the model
+        ask = f"{text}\n(Смысл запроса с учётом прошлых: {query})" if query != text else text
+        return Reply(stream=self._record(text, self._local_agent(history, ask, picture),
+                                         asked=query if query != text else ""))
 
     # ------------------------------------------------------------------ commands
     async def _run_commands(self, text: str, hits: list[tuple[Skill, Intent]], source: str = "skill") -> Reply:
@@ -400,12 +443,13 @@ class Brain:
             self.last_undo = _chain_undo(undos) if undos else None
             self.last_route = (normalize_command(text), source)
             self.last_answer_key = ""
-        self.app.dialog.add("user", text, action=True)
         said = " ".join(r.speech for r in replies if r.speech)
-        if said:
-            self.app.dialog.add("assistant", said, action=True)
-        done = ", ".join(i.text for _, i in hits)
-        self._note(text, f"выполнено «{done}»" + (f": {said[:90]}" if said else ""))
+        if not any(skill.name == "system" and intent.action in _UNNOTED for skill, intent in hits):
+            self.app.dialog.add("user", text, action=True)
+            if said:
+                self.app.dialog.add("assistant", said, action=True)
+            done = ", ".join(i.text for _, i in hits)
+            self._note(text, f"выполнено «{done}»" + (f": {said[:90]}" if said else ""), kind="command", meta=meta)
         if len(replies) == 1:
             return replies[0]
         # Several commands: all actions are done; speak the informative parts, streams follow.
@@ -425,14 +469,128 @@ class Brain:
             return reply
         return Reply(self.app.speaker.last_text or "Пока нечего повторять.")
 
-    def _note(self, text: str, did: str) -> None:
-        self.turns.append(Turn(text, did))
+    def _note(self, text: str, did: str, kind: str = "", meta: bool = False, asked: str = "") -> None:
+        self.turns.append(Turn(text, did, kind, meta, asked))
+
+    def _followup(self, prev: tuple[Skill, Intent] | None, norm: str, text: str,
+                  hit: tuple[Skill, Intent] | None) -> tuple[Skill, Intent] | None:
+        """The previous command's skill reads the phrase as its follow-up ("а завтра?") -> (skill, new intent)."""
+        if prev is None:
+            return None
+        skill, last = prev
+        if hit is not None and hit[0].name not in getattr(skill, "followup_over", ()):
+            return None
+        if len(norm.split()) > 5 and not getattr(skill, "long_followups", False):
+            return None
+        try:
+            follow = skill.followup(norm, last)
+        except Exception:
+            log.exception("followup() в модуле %s", skill.name)
+            return None
+        if follow is None:
+            return None
+        follow.text, follow.raw = norm, text
+        log.info("Уточнение к %s.%s: %s", skill.name, follow.action, private(follow.slots))
+        return skill, follow
+
+    # ------------------------------------------------------------------ the user's earlier requests
+    def requests(self) -> list[Turn]:
+        """The user's own requests, oldest first: without "не то", "ещё раз", "да" and looks into the history."""
+        return [t for t in self.turns if not t.meta and t.kind]
+
+    def recall(self, more: bool = False, back: int = 1) -> Reply:
+        """"какой был мой прошлый запрос" (back=1), "позапрошлый" (2), "а до этого?" (more: one further back)."""
+        reqs = self.requests()
+        newest = reqs[-1] if reqs else None
+        depth, mark = self._recall
+        n = depth + 1 if more and depth and mark is newest else back
+        if not reqs:
+            return Reply("Вы ещё ничего не просили.", listen_after=False)
+        if n > len(reqs):
+            self._recall = (len(reqs), newest)
+            return Reply("Раньше этого запросов не помню.", listen_after=False)
+        turn = reqs[-n]
+        self._recall = (n, newest)
+        said = turn.text.strip().rstrip(".!?")
+        verb = "спросили" if turn.kind == "answer" or turn.text.rstrip().endswith("?") else "попросили"
+        when = {1: "", 2: " до этого"}.get(n, f" {n} запроса назад" if n < 5 else f" {n} запросов назад")
+        speech = f"Вы{when} {verb}: «{said}»."
+        if turn.asked and normalize_command(turn.asked) != normalize_command(turn.text):
+            speech += f" То есть: {turn.asked.rstrip('.?!')}."
+        log.info("Прошлый запрос (%d назад)", n)
+
+        async def again(phrase: str) -> Reply | None:
+            """"давай ещё раз" runs it again, "да, только для Казани" with the change; anything else is new."""
+            if _RERUN.match(phrase):
+                log.info("Повторяю прошлый запрос")
+                return await self._handle(turn.text)
+            if m := _RERUN_WITH.match(phrase):
+                return await self.correct(m.group("change"), turn, undo=False)
+            return None
+
+        return Reply(speech, ask=again)
+
+    def recalling(self) -> bool:
+        """The last thing was "какой был мой прошлый запрос": "а до этого?" goes further back."""
+        reqs = self.requests()
+        return bool(self._recall[0]) and self._recall[1] is (reqs[-1] if reqs else None)
+
+    async def rerun(self) -> Reply:
+        """"повтори мой прошлый запрос": the last request again, a question or a command."""
+        reqs = self.requests()
+        if not reqs:
+            return Reply("Повторять пока нечего.", listen_after=False)
+        log.info("Повторяю прошлый запрос")
+        return await self._handle(reqs[-1].text)
+
+    def history(self) -> Reply:
+        """"мои последние запросы": the last three aloud, up to ten in a window."""
+        reqs = self.requests()
+        if not reqs:
+            return Reply("Вы ещё ничего не просили.", listen_after=False)
+        lines = [f"{i}. {t.text.strip()}" + (f" — {t.did.split(': ', 1)[-1][:80]}" if t.kind == "answer" else "")
+                 for i, t in enumerate(reversed(reqs[-10:]), 1)]
+        self.app.ui.show_deck(_history_deck("\n".join(lines)))
+        last = [f"«{t.text.strip().rstrip('.!?')}»" for t in reversed(reqs[-3:])]
+        return Reply("Последние: " + ", ".join(last) + ". Список на экране.")
+
+    async def correct(self, change: str, base: Turn | None = None, undo: bool = True) -> Reply:
+        """"не то, я имел в виду …", "я просил про питон": the last request (or `base`) is taken back if it was an
+        action, then done again with the correction. undo=False: a new variant ("да, только для Казани")."""
+        reqs = self.requests()
+        base = base or (reqs[-1] if reqs else None)
+        if base is None:
+            return await self._handle(change)
+        if undo and base is (reqs[-1] if reqs else None) and self.last_undo is not None:
+            undo, self.last_undo = self.last_undo, None
+            try:
+                await undo()   # its "Отменил" is not said: the corrected request answers instead
+            except Exception:
+                log.exception("Отмена перед поправкой")
+            if self.last_route and self.last_route[1] in ("phrasebook", "router"):
+                self.router.forget(self.last_route[0])
+                self.router.drop_candidate(self.last_route[0])
+        if undo and self.last_answer_key:   # the cached answer was wrong
+            self.router.forget_answer(self.last_answer_key)
+            self.last_answer_key = ""
+        log.info("Поправка к «%s»: %s", private(base.text), private(change))
+        return await self._handle(change, revise=base)
 
     # ------------------------------------------------------------------ answers
     def answer(self, text: str, fresh: bool = False, picture: str = "") -> Reply:
         """A spoken answer to `text` from the cloud chain (skills that need an explanation, not an action)."""
         self.last_undo, self.last_route = None, (normalize_command(text), "answer")
         return self._answer_web(text, text, fresh, picture)
+
+    def _recent_addon(self) -> str:
+        """The user's last requests, commands included (the chat history hides them): "что я просил до этого",
+        "сделай как в прошлый раз" are answered from this list, not guessed."""
+        reqs = self.requests()[-6:]
+        if not reqs:
+            return ""
+        lines = "\n".join(f"- «{t.text}» → {t.did[:110]}" for t in reqs)
+        return ("\nПоследние запросы пользователя к тебе, от старых к новым (последний — самый свежий; действия уже "
+                "выполнены, не повторяй их без просьбы):\n" + lines)
 
     @staticmethod
     def _picture_addon(picture: str) -> str:
@@ -445,10 +603,11 @@ class Brain:
         history = self.app.dialog.messages()
         self.app.dialog.add("user", text)
         self.last_answer_key = key
+        asked = query if query != text else ""
         if cached:
             log.info("Ответ из кэша (облако не тратится)")
             self.app.llm.last_provider = "кэш"
-            return Reply(stream=self._record(text, _once(cached)))
+            return Reply(stream=self._record(text, _once(cached), asked=asked))
         # The router already folded the context into `query`; old turns would only cost tokens.
         keep = 0 if query != text else self.app.cfg.llm.cloud_history_turns * 2
         messages = [self._system(INFO_ADDON + self._picture_addon(picture)), *(history[-keep:] if keep else []),
@@ -456,10 +615,10 @@ class Brain:
         # Web search costs ~4k input tokens per question (search results go into the prompt):
         # only fresh data needs it; stable facts the model already knows.
         stream = self.app.llm.stream(self.app.cfg.llm.info_chain, messages, web=fresh)
-        return Reply(stream=self._record(text, stream, cache_key=key, fresh=fresh))
+        return Reply(stream=self._record(text, stream, cache_key=key, fresh=fresh, asked=asked))
 
     async def _record(self, text: str, stream: AsyncIterator[str], cache_key: str = "",
-                      fresh: bool = True) -> AsyncIterator[str]:
+                      fresh: bool = True, asked: str = "") -> AsyncIterator[str]:
         parts: list[str] = []
         self._turn_used_tools = False
         try:
@@ -471,7 +630,7 @@ class Brain:
             if self._turn_used_tools:
                 self.app.dialog.mark_last_user_action()
             self.app.dialog.add("assistant", answer, action=self._turn_used_tools)
-            self._note(text, f"ответил: {answer[:100]}")
+            self._note(text, f"ответил: {answer[:100]}", kind="answer", asked=asked)
             if cache_key and answer and self.app.llm.last_provider in ("groq", "gemini") and answer != FAIL_TEXT:
                 self.router.remember_answer(cache_key, answer, fresh)
 
@@ -479,7 +638,8 @@ class Brain:
         """Local model with tool calling. Direct tools answer the user themselves."""
         local = self.app.llm.local
         self.app.llm.last_provider = "local"
-        messages = [self._system(LOCAL_ADDON + self._picture_addon(picture)), *history, Msg("user", text)]
+        messages = [self._system(LOCAL_ADDON + self._picture_addon(picture) + self._recent_addon()), *history,
+                    Msg("user", text)]
         schemas = [tool.schema() for _, tool in self.tools.values()]
         for _round in range(3):
             turn = LocalTurn()

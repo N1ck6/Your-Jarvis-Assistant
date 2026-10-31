@@ -5,7 +5,7 @@
 [[command]]
 action = "translate"
 patterns = ['^переведи( это| выделенное)?$']
-source = "selection"        # said | selection | screen | auto | none
+source = "selection"        # said | selection | screen | auto | previous | none
 prompt = "translate"        # prompts/translate.md; {name} is replaced by a slot (see below)
 chain = "local"             # local | info | vision | ["gemini", "groq"] | "@chain" (a value of [config])
 output = "clipboard"        # speak | card | clipboard | replace | solution_answer | read
@@ -13,12 +13,16 @@ title = "Перевод · {lang}"
 
 Slots for {name} in prompts, titles and replies: what the skill's match() put in the intent, what its prepare() added,
 and "phrase" (what was said), "question" (the same), "where" (" с изображения" for a picture).
+source = "previous" works again on the text or picture of this skill's last prompted command ("а если скорость 80?"
+after "реши эту задачу"): slots "previous" (its answer), "task" (its phrase) and "changes" (every change asked since,
+the intent's slot "change" is added to them).
 SKILLS.md lists every field.
 """
 from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import TYPE_CHECKING, Any, AsyncIterator
 
 from assistant import plaintext
@@ -32,12 +36,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("prompting")
 
-SOURCES = {"said", "selection", "screen", "auto", "none"}
+SOURCES = {"said", "selection", "screen", "auto", "previous", "none"}
 OUTPUTS = {"speak", "card", "clipboard", "replace", "solution_answer", "read"}
 OPTIONS = {"source", "prompt", "chain", "image_chain", "models", "local_fallback", "output", "title", "say_first",
            "empty_reply", "nothing", "nothing_reply", "fail_reply", "max_tokens", "local_warning", "speak_max",
            "speak_if", "recent_sec", "reaction", "listen_after", "web", "max_chars"}
 DEFAULT_EMPTY = "Сначала выделите текст, а потом скажите, что с ним сделать."
+NO_PREVIOUS = "Не помню прошлую задачу. Скажите её целиком или выделите."
 LOCAL_NOTE = "Облако недоступно, ответил локально — лучше проверьте. "
 
 
@@ -92,7 +97,17 @@ class Runner:
     async def run(self) -> Reply:
         source = self.opt("source", "none")
         text, images = "", []
-        if source == "said":
+        last = getattr(self.skill, "last_run", None)
+        if source == "previous":
+            if not last:
+                return Reply(fill(self.opt("empty_reply", NO_PREVIOUS), self.slots))
+            change = str(self.intent.slots.get("change") or "").strip()
+            if change:
+                last["changes"].append(change)
+            text, images = last["text"], list(last["images"])
+            self.slots.update(previous=last["answer"], task=last["phrase"],
+                              changes="; ".join(last["changes"]) or "нет")
+        elif source == "said":
             text = self.intent.raw or self.intent.text
         elif source == "auto":
             recent = self.ctx.recent("screen.region", float(self.opt("recent_sec", 300)))
@@ -110,6 +125,11 @@ class Runner:
                 return Reply(listen_after=False)
             images = [png]
         text = text[: int(self.opt("max_chars", 6000))]
+        if source != "previous":
+            # what "а если …" works on next time; the answer is added when it comes
+            self.skill.last_run = {"phrase": self.intent.raw or self.intent.text, "text": text, "images": images,
+                                   "answer": "", "changes": [], "output": self.opt("output", "speak"),
+                                   "at": time.monotonic()}
         self.slots["text"] = text
         self.slots["where"] = " с изображения" if images else ""
         self.slots.update(self.skill.prepare(self.intent, text) or {})
@@ -159,6 +179,9 @@ class Runner:
         """What to do with the model's answer."""
         if not answer or answer == FAIL_TEXT or answer.startswith("Не получилось"):
             return Reply(fill(self.opt("fail_reply", FAIL_TEXT), self.slots))
+        last = getattr(self.skill, "last_run", None)
+        if last is not None and last["output"] == self.opt("output", "speak"):
+            last["answer"], last["at"] = answer, time.monotonic()  # a new solution replaces the old one
         nothing = self.opt("nothing")
         if nothing and answer.upper().startswith(nothing.upper()) and len(answer) < len(nothing) + 30:
             return Reply(fill(self.opt("nothing_reply", "Здесь ничего не нашёл."), self.slots), listen_after=False)

@@ -11,4 +11,5 @@ phrase = [
     { text = "перепиши вежливо", action = "rewrite" },
     { text = "прочитай выделенное", action = "read" },
     { text = "озвучь это", action = "read" },
+    { text = "исправь ошибки в тексте", action = "fix" },
 ]

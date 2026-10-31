@@ -14,9 +14,9 @@
   </defs>
   <circle cx="64" cy="64" r="62" fill="url(#disc)"/>
   <circle cx="64" cy="64" r="58" fill="none" stroke="#2AA8E0" stroke-width="3"/>
-  <!-- segmented ring, a gap at the top like the reactor -->
+  <!-- segmented ring: pathLength 300 makes exactly 25 equal segments, none cut short -->
   <circle cx="64" cy="64" r="48" fill="none" stroke="#2AA8E0" stroke-width="10" opacity="0.85"
-          stroke-dasharray="8.6 3.4" transform="rotate(-84 64 64)"/>
+          pathLength="300" stroke-dasharray="8.6 3.4" transform="rotate(-84 64 64)"/>
   <circle cx="64" cy="64" r="40" fill="none" stroke="#8FDCFF" stroke-width="2.5"/>
   <circle cx="64" cy="64" r="37" fill="url(#core)"/>
   <!-- the triangle -->

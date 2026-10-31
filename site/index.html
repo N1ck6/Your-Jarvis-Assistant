@@ -24,7 +24,7 @@
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
 <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/fill/style.css">
 <link rel="stylesheet" href="assets/site.css">
-<script>try { if (sessionStorage.getItem("booted")) document.documentElement.classList.add("booted"); } catch (_) {}</script>
+<script>try { if (sessionStorage.getItem("booted")) document.documentElement.classList.add("booted"); if (localStorage.getItem("motion") === "off") document.documentElement.classList.add("still"); } catch (_) {}</script>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -78,6 +78,7 @@
       <li><a href="#compare">Сравнение</a></li>
       <li><a href="#faq">Вопросы</a></li>
     </ul>
+    <button class="nav-motion" id="motion" type="button" aria-pressed="true" aria-label="Анимация" title="Остановить анимацию"><i class="ph ph-pause"></i></button>
     <a class="nav-gh" href="https://github.com/N1ck6/Your-Jarvis-Assistant" aria-label="Исходный код на GitHub"><i class="ph ph-github-logo"></i></a>
     <a class="btn btn-primary btn-sm" href="https://github.com/N1ck6/Your-Jarvis-Assistant/archive/refs/heads/main.zip"><i class="ph ph-download-simple"></i>Скачать</a>
     <button class="menu-btn" type="button" aria-expanded="false" aria-controls="menu" aria-label="Открыть меню"><span></span><span></span></button>

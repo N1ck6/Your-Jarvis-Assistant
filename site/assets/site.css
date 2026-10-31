@@ -169,6 +169,9 @@ main, .foot { position: relative; z-index: 2; }
 .nav-gh { display: none; width: 36px; height: 36px; border-radius: 9999px; align-items: center; justify-content: center; color: var(--muted); text-decoration: none; transition: color 300ms var(--ease); }
 .nav-gh:hover { color: var(--text); }
 .nav-gh i { font-size: 1.25rem; }
+.nav-motion { display: flex; width: 36px; height: 36px; border: 0; border-radius: 9999px; align-items: center; justify-content: center; background: none; color: var(--muted); cursor: pointer; transition: color 300ms var(--ease); }
+.nav-motion:hover, .nav-motion[aria-pressed="false"] { color: var(--glow); }
+.nav-motion i { font-size: 1.125rem; }
 @media (min-width: 960px) { .nav-links, .nav-gh { display: flex; } .menu-btn { display: none !important; } }
 .menu-btn { position: relative; width: 36px; height: 36px; border: 0; border-radius: 9999px; background: rgba(143, 220, 255, 0.08); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .menu-btn span { position: absolute; left: 10px; width: 16px; height: 2px; border-radius: 2px; background: var(--text); transition: transform 500ms var(--ease); }
@@ -538,19 +541,19 @@ button.cmd { cursor: pointer; }
 .reveal.tilt.in { transform: rotateX(var(--rx)) rotateY(var(--ry)); }
 .vs-card:not(.good).reveal.in { opacity: 0.75; }
 
-@media (prefers-reduced-motion: reduce) {
-  .scan::after, .btn-primary::after, .brand img, .tilt::before, .hero h1 .accent, .live, .caret, .editor .rec { animation: none; }
-  .reveal, .reveal.from-left, .reveal.from-right { transform: none; filter: none; transition: opacity 600ms var(--ease); }
-  .hero h1 .line { transform: none; }
-  .hero-lead, .hero-cta, .hero .eyebrow { opacity: 1; transform: none; }
-  .console { --tilt: 0deg !important; --lift: 0px !important; --sc: 1 !important; }
-  .tagline .w { transform: none; filter: none; }
-  .st, .st.past { transform: none; filter: none; }
-  .menu a, .done, .confirm, .win, .agent li { transform: none !important; }
-  .cmd, .faq .a { animation: none; }
-  .play .paper .sel, .play .win.solution, .play .win.answer { animation: none; opacity: 1; transform: none; }
-  .boot { display: none; }
-  .marquee { transform: none; }
-  .mq-track { flex-wrap: wrap; white-space: normal; }
-  .cursor { display: none; }
-}
+/* motion off: the visitor pressed the pause button in the bar (the OS setting no longer silences the page) */
+.still .scan::after, .still .btn-primary::after, .still .brand img, .still .tilt::before, .still .hero h1 .accent, .still .live, .still .caret, .still .editor .rec { animation: none; }
+.still .reveal, .still .reveal.from-left, .still .reveal.from-right { transform: none; filter: none; transition: opacity 600ms var(--ease); }
+.still .hero h1 .line { transform: none; }
+.still .hero-lead, .still .hero-cta, .still .hero .eyebrow { opacity: 1; transform: none; }
+.still .console { --tilt: 0deg !important; --lift: 0px !important; --sc: 1 !important; }
+.still .tagline .w { transform: none; filter: none; }
+.still .st, .still .st.past { transform: none; filter: none; }
+.still .menu a, .still .done, .still .confirm, .still .win, .still .agent li { transform: none !important; }
+.still .cmd, .still .faq .a { animation: none; }
+.still .play .paper .sel, .still .play .win.solution, .still .play .win.answer { animation: none; opacity: 1; transform: none; }
+.still .boot { display: none; }
+.still .marquee { transform: none; }
+.still .mq-track { flex-wrap: wrap; white-space: normal; }
+.still .cursor { display: none; }
+

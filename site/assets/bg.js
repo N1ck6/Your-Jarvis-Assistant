@@ -3,7 +3,7 @@
    window.JarvisBG lets the page set the hue (0 cyan, 1 amber) and the scroll velocity. */
 (() => {
   "use strict";
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduced = document.documentElement.classList.contains("still"); // the pause button in the bar
   const mobile = matchMedia("(max-width: 767px)").matches;
   const state = { hue: 0, hueTarget: 0, vel: 0, mouse: [0.5, 0.45], mouseTarget: [0.5, 0.45], scroll: 0 };
   window.JarvisBG = {

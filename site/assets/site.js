@@ -2,11 +2,22 @@
    tilt and magnetic hover, the talking console, the microphone reactor, command tabs. The background is bg.js. */
 (() => {
   "use strict";
-  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const fine = matchMedia("(pointer: fine)").matches;
   const root = document.documentElement;
+  // motion stays on even when Windows animation effects are off; the visitor can pause it in the bar
+  const reduced = root.classList.contains("still");
+  const fine = matchMedia("(pointer: fine)").matches;
   const $ = (sel, el = document) => el.querySelector(sel);
   const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+  const motionBtn = $("#motion");
+  if (motionBtn) {
+    motionBtn.setAttribute("aria-pressed", String(!reduced));
+    motionBtn.title = reduced ? "Включить анимацию" : "Остановить анимацию";
+    motionBtn.firstElementChild.className = reduced ? "ph ph-play" : "ph ph-pause";
+    motionBtn.addEventListener("click", () => {
+      try { localStorage.setItem("motion", reduced ? "on" : "off"); } catch (_) {}
+      location.reload();
+    });
+  }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const voice = (name) => `assets/voice/${name}.mp3`;
@@ -227,8 +238,9 @@
     }
     g.globalAlpha = 0.55; g.strokeStyle = main; g.lineWidth = 2;
     g.beginPath(); g.arc(0, 0, 110, 0, Math.PI * 2); g.stroke();
-    g.save(); g.rotate(o.spin); g.globalAlpha = 0.9; g.lineWidth = 16; g.setLineDash([17, 6.5]);
-    g.beginPath(); g.arc(0, 0, 90, 0.2, Math.PI * 2 - 0.2); g.stroke(); g.setLineDash([]); g.restore();
+    g.save(); g.rotate(o.spin); g.globalAlpha = 0.9; g.lineWidth = 16;
+    const seg = (Math.PI * 2 * 90) / 24; g.setLineDash([seg * 0.72, seg * 0.28]);
+    g.beginPath(); g.arc(0, 0, 90, 0, Math.PI * 2); g.stroke(); g.setLineDash([]); g.restore();
     g.save(); g.rotate(-o.spin * 1.7); g.globalAlpha = 0.6; g.strokeStyle = light; g.lineWidth = 2;
     g.beginPath(); g.arc(0, 0, 102, 0, 0.9); g.stroke(); g.beginPath(); g.arc(0, 0, 102, Math.PI, Math.PI + 0.9); g.stroke(); g.restore();
     g.globalAlpha = 1; g.strokeStyle = light; g.lineWidth = 2.5;

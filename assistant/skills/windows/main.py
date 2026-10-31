@@ -146,9 +146,7 @@ class WindowsSkill(Skill):
             async def reopen() -> Reply:
                 if not path:
                     return Reply(f"Не знаю, откуда снова открыть {target.friendly}.")
-                import os
-
-                await run_blocking(os.startfile, path)  # type: ignore[attr-defined]
+                await run_blocking(winutil.open_front, path)
                 return Reply(f"Открываю {target.friendly} обратно.")
 
             return Reply(f"Закрываю {target.friendly}.", reaction="ok", tool_result="закрыто", listen_after=False,

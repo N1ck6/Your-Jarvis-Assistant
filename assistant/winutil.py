@@ -16,6 +16,8 @@ import win32process
 
 log = logging.getLogger("win")
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+kernel32.GetTickCount64.restype = ctypes.c_ulonglong
 
 # ------------------------------------------------------------------ clipboard
 
@@ -403,3 +405,72 @@ def kill_process_tree(exe: str) -> int:
             except psutil.Error:
                 pass
     return n
+
+
+def uptime_sec() -> float:
+    """Seconds since Windows started."""
+    return kernel32.GetTickCount64() / 1000.0
+
+
+def _visible_top(cls: str | None = None) -> set[int]:
+    found: set[int] = set()
+
+    def cb(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd) and not win32gui.GetWindow(hwnd, win32con.GW_OWNER) and \
+                (cls is None or win32gui.GetClassName(hwnd) == cls):
+            found.add(hwnd)
+        return True
+
+    win32gui.EnumWindows(cb, None)
+    return found
+
+
+def _raise(hwnd: int) -> None:
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    # Only the foreground process may move focus: a synthetic Alt tap lifts the lock for us.
+    _key(win32con.VK_MENU, False)
+    _key(win32con.VK_MENU, True)
+    try:
+        win32gui.SetForegroundWindow(hwnd)
+        win32gui.BringWindowToTop(hwnd)
+    except Exception:
+        log.debug("окно %s не поднялось", hwnd, exc_info=True)
+
+
+def open_front(path: str | os.PathLike, timeout: float = 4.0) -> None:
+    """Opens a folder (Explorer) or a file / program (its own app) on top of all windows.
+
+    Jarvis runs in the background, and Windows lets only the foreground process raise windows: a bare
+    os.startfile / explorer.exe opens behind the browser. So the new window (or the already open window of that
+    folder) is found within `timeout` seconds and brought forward. The wait runs in its own thread."""
+    import subprocess
+    import threading
+
+    target = os.fspath(path)
+    folder = os.path.isdir(target)
+    cls = "CabinetWClass" if folder else None
+    before = _visible_top(cls)
+    if folder:
+        subprocess.Popen(["explorer.exe", target])
+    else:
+        os.startfile(target)  # type: ignore[attr-defined]
+    name = os.path.basename(target.rstrip("\\/")).lower()
+    stem = os.path.splitext(name)[0]
+
+    def wait() -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            time.sleep(0.15)
+            now = _visible_top(cls)
+            fresh = [h for h in now if h not in before]
+            if folder:   # an Explorer window of this folder that was already open is reused, not created
+                fresh += [h for h in now if (t := win32gui.GetWindowText(h).lower()) == name
+                          or t.startswith(name + " ") or target.lower() in t]
+            elif stem:   # the file's window: its name is in the title (the newest window otherwise)
+                fresh.sort(key=lambda h: stem not in win32gui.GetWindowText(h).lower())
+            if fresh:
+                _raise(fresh[0])
+                return
+
+    threading.Thread(target=wait, name="open-front", daemon=True).start()

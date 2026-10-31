@@ -116,17 +116,24 @@ def test_raw_wake_needs_a_voice_in_the_cleaned_signal():
     assert "wake" in events and core.mode is Mode.CAPTURE
 
 
-def test_talk_over_turns_jarvis_down_and_back_up():
+def test_talk_over_turns_jarvis_down_for_a_voice_and_back_up():
+    from assistant.tts.manager import TtsManager
+
     events = []
     core = core_with(events)
     core.wake.feed_wake_raw = lambda pcm: False
     core.assistant_speaking = True
-    voice = (np.sin(np.arange(FRAME) / 3) * 8000).astype(np.int16)
-    for _ in range(6):
-        core.process(voice, raw=voice)
+    rng = np.random.default_rng(0)
+    for _ in range(40):                  # rustles and a noisy room: loud, but not a voice
+        core.process((rng.standard_normal(FRAME) * 3000).astype(np.int16), raw=np.zeros(FRAME, np.int16))
+    assert ("talk", True) not in events
+    clip = TtsManager("silero:eugene").synth("Подожди, я хочу спросить о другом.")
+    voice = (np.clip(clip.samples[::3], -1, 1) * 20000).astype(np.int16)
+    for i in range(0, len(voice) - FRAME + 1, FRAME):
+        core.process(voice[i:i + FRAME], raw=voice[i:i + FRAME])
     assert ("talk", True) in events
     for _ in range(60):                  # 1.9 s of quiet
-        core.process(np.zeros(FRAME, np.int16), raw=voice)
+        core.process(np.zeros(FRAME, np.int16), raw=np.zeros(FRAME, np.int16))
     assert events[-1] == ("talk", False)
 
 

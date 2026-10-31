@@ -76,11 +76,16 @@ class LlmHub:
                 # Without search the model would invent today's rates and scores from its training data.
                 msgs = [Msg("system", OFFLINE_NOTE), *messages]
             extra = {"models": models[provider.name]} if models and models.get(provider.name) else {}
+            held = ""   # whitespace before the first word: an answer of only that is empty (try the next one)
             try:
                 async for delta in provider.stream(msgs, web=web, max_tokens=max_tokens, **extra):
                     if not started:
+                        if not delta.strip():
+                            held += delta
+                            continue
                         started = True
                         self.last_provider = provider.name
+                        delta = held.lstrip() + delta
                     yield delta
                 if started:
                     self.usage.record(provider.name, *provider.last_usage)

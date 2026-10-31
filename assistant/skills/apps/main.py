@@ -146,7 +146,9 @@ def _launch(target: str) -> None:
     elif target.startswith("shell:AppsFolder"):
         subprocess.Popen(["explorer.exe", target], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     else:
-        os.startfile(target)  # type: ignore[attr-defined]
+        from assistant import winutil
+
+        winutil.open_front(target, timeout=8)  # a program may take a few seconds to show its window
 
 
 def create() -> Skill:

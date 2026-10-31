@@ -125,6 +125,8 @@ def main() -> None:
     parser.add_argument("--list-devices", action="store_true", help="показать аудиоустройства")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--wait-lock", action="store_true", help=argparse.SUPPRESS)  # used by restart
+    # Started with Windows (the Startup shortcut): no greeting, nothing spoken until the user calls.
+    parser.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -152,6 +154,7 @@ def main() -> None:
     if headless:
         ui = ConsoleUi()
         assistant = Assistant(cfg, ui, use_mic=not args.text)
+        assistant.quiet_start = _quiet_start(args, cfg)
         core = CoreThread(assistant)
         done = threading.Event()
         assistant.on_exit = done.set
@@ -180,6 +183,7 @@ def main() -> None:
     qapp.setApplicationName("Джарвис")
     ui = QtUi(cfg.explain.linger_sec)
     assistant = Assistant(cfg, ui)
+    assistant.quiet_start = _quiet_start(args, cfg)
     core = CoreThread(assistant)
 
     def quit_app() -> None:
@@ -197,6 +201,19 @@ def main() -> None:
     if core.is_alive():
         core.stop()
     sys.exit(code)
+
+
+def _quiet_start(args, cfg: Settings) -> bool:
+    """Started with Windows: the --autostart shortcut, or an old shortcut without it in the first minutes after boot.
+    An old shortcut is rewritten with the flag."""
+    from assistant import autostart, winutil
+
+    if cfg.ui.autostart and autostart.is_enabled() and not autostart.is_current():
+        try:
+            autostart.set_enabled(True)
+        except Exception as exc:
+            log.warning("Ярлык автозапуска не обновлён: %s", exc)
+    return args.autostart or winutil.uptime_sec() < 180
 
 
 def _voicelab_only(cfg: Settings) -> None:

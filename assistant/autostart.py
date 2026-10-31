@@ -27,9 +27,22 @@ def is_enabled(folder: Path | None = None) -> bool:
 def _target() -> tuple[str, str]:
     """(program, arguments): the venv's windowless Python, or the frozen exe of an installed build."""
     if getattr(sys, "frozen", False):
-        return sys.executable, ""
+        return sys.executable, "--autostart"
     pythonw = ROOT / ".venv" / "Scripts" / "pythonw.exe"
-    return str(pythonw if pythonw.exists() else Path(sys.executable).with_name("pythonw.exe")), "-m assistant"
+    return str(pythonw if pythonw.exists() else Path(sys.executable).with_name("pythonw.exe")), "-m assistant --autostart"
+
+
+def is_current(folder: Path | None = None) -> bool:
+    """The shortcut starts Jarvis quietly (--autostart; shortcuts made by older versions lack it)."""
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        link = win32com.client.Dispatch("WScript.Shell").CreateShortcut(str(shortcut_path(folder)))
+        return "--autostart" in (link.Arguments or "")
+    except Exception:
+        return True   # cannot read it: leave it as it is
 
 
 def set_enabled(enabled: bool, folder: Path | None = None) -> None:

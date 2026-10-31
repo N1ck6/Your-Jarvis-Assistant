@@ -92,6 +92,11 @@ class ListenerCore:
         self._near_voiced: collections.deque[bool] = collections.deque(maxlen=int(1.0 / self.frame_sec))
         self.near_min = 3
         self.near_rms = 330.0   # int16 RMS, about -40 dBFS
+        # Talking over Jarvis turns his voice down only for a voice: ~0.2 s of clear speech in the cleaned signal.
+        # Rustles, clicks and a noisy room are loud enough for `near` but not speech-like for the VAD.
+        self.talk_over_prob = 0.75
+        self._talk_voiced: collections.deque[bool] = collections.deque(maxlen=int(0.35 / self.frame_sec))
+        self.talk_over_frames = 6
         self._talk_over = False
         self._talk_over_quiet = 0
         self._talk_over_release = int(1.5 / self.frame_sec)
@@ -224,7 +229,7 @@ class ListenerCore:
             near = voiced or float(np.sqrt(np.mean(frame.astype(np.float32) ** 2))) > self.near_rms
             self._near_voiced.append(near)
             if raw is not None:
-                self._track_talk_over(near)
+                self._track_talk_over(prob >= max(self.th, self.talk_over_prob))
             if raw is not None and self.mode is Mode.WAIT:
                 if self.assistant_speaking:
                     self._raw_active = True
@@ -253,18 +258,18 @@ class ListenerCore:
                 self._process_dictate(frame, voiced)
             self.pre_roll.append(frame)
 
-    def _track_talk_over(self, near: bool) -> None:
-        """A voice in the cleaned signal while Jarvis talks: tell the assistant (it turns Jarvis down) after ~100 ms
-        of it; all clear after 1.5 s of quiet or when Jarvis stops."""
-        recent = list(self._near_voiced)[-int(0.2 / self.frame_sec):]
-        if self.assistant_speaking and sum(recent) >= self.near_min:
+    def _track_talk_over(self, speech: bool) -> None:
+        """A voice in the cleaned signal while Jarvis talks: tell the assistant (it turns Jarvis down) after ~0.2 s
+        of clear speech; all clear after 1.5 s without it or when Jarvis stops."""
+        self._talk_voiced.append(speech)
+        if self.assistant_speaking and sum(self._talk_voiced) >= self.talk_over_frames:
             self._talk_over_quiet = 0
             if not self._talk_over:
                 self._talk_over = True
                 if self.ev.on_talk_over is not None:
                     self.ev.on_talk_over(True)
         elif self._talk_over:
-            self._talk_over_quiet += 1
+            self._talk_over_quiet = 0 if speech else self._talk_over_quiet + 1
             if not self.assistant_speaking or self._talk_over_quiet >= self._talk_over_release:
                 self._talk_over = False
                 if self.ev.on_talk_over is not None:

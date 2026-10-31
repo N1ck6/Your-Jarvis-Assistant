@@ -124,6 +124,8 @@ class Assistant:
         self.state_listeners: list[Callable[[State], None]] = []
         self.voicelab_url = f"http://{cfg.voicelab.host}:{cfg.voicelab.port}/"
         self.on_exit: Callable[[], None] = lambda: None
+        # Started with Windows: no greeting and nothing spoken at startup (missed reminders go to the tray).
+        self.quiet_start = False
 
         self.dialog = Dialog(cfg.assistant.dialog_ttl_sec, cfg.assistant.dialog_max_turns)
         self.llm = LlmHub(cfg.llm)
@@ -162,6 +164,10 @@ class Assistant:
         # Words Jarvis is saying while the microphone already listens ("Да, сэр" after a bare wake word).
         self._echo_guard = ""
         self._await_until = 0.0
+        # The request that was running when a wake word was heard over it: it is cancelled only once the recognizer
+        # confirms the name (a noise, the TV or Jarvis's own echo often sounds like "Джарвис" to the spotter).
+        self._held: asyncio.Task | None = None
+        self._held_at = 0.0
 
     # ------------------------------------------------------------------ startup
     def load_models(self) -> None:
@@ -229,7 +235,7 @@ class Assistant:
         self._set_state(State.IDLE)
         self._ready.set()
         log.info("Готов. Скажите «%s» и команду.", self.cfg.assistant.name)
-        if self.cfg.voice.greet_on_start and self.pack:
+        if self.cfg.voice.greet_on_start and self.pack and not self.quiet_start:
             clip = self.pack.greeting()
             if clip:
                 await self.speaker.play_clip(clip)
@@ -426,6 +432,8 @@ class Assistant:
     def _on_talk_over(self, talking: bool) -> None:
         """The user talks over Jarvis (listener thread): his voice goes down at once so the rest of the phrase,
         maybe "Джарвис, …", is heard over less echo; back up when the user is done."""
+        if self._held is not None:
+            return  # a wake word over the answer is being checked: the voice stays down until it is
         aec = self.mic.aec if self.mic else None
         if talking and (aec is None or not aec.adapted):
             return  # the first seconds the canceller lets echo through: that is not the user
@@ -526,6 +534,7 @@ class Assistant:
     def interrupt(self) -> None:
         """Stop talking and drop the running request (except the caller itself)."""
         self.interruptions += 1  # a ringing alarm stops when the user says anything to Jarvis
+        self._held = None
         self.speaker.stop()
         task = self._task
         if task and not task.done() and task is not asyncio.current_task():
@@ -546,9 +555,24 @@ class Assistant:
         if self.mic:
             self.set_muted(not self.mic.paused)
 
+    def _cancel_if_busy(self) -> bool:
+        """The button pressed again, or by accident, or someone else said "Джарвис": while Jarvis listens or works
+        on the request, the button switches him off instead of starting over. Not while he talks: then the button
+        is how the user cuts in with a new question."""
+        if self._dictating or self.state not in (State.LISTENING, State.THINKING):
+            return False
+        log.info("Кнопка Джарвиса: слушание отменено")
+        self.interrupt()
+        self._echo_guard, self._await_until = "", 0.0
+        if self.listener:
+            self.listener.to_wait()
+        self._earcon(earcons.CANCEL)
+        self._set_state(State.IDLE)
+        return True
+
     def listen_now(self) -> None:
-        """Hotkey / tray: start listening without the wake word."""
-        if not self.listener:
+        """Hotkey / tray: start listening without the wake word; pressed while listening, stop."""
+        if not self.listener or self._cancel_if_busy():
             return
         if self.mic and self.mic.paused:
             self.set_muted(False)
@@ -558,8 +582,9 @@ class Assistant:
         self._set_state(State.LISTENING)
 
     def wake_up(self) -> None:
-        """The same as saying "Джарвис" alone (the browser extension's button): "Да, сэр" and wait for the command."""
-        if not self.listener:
+        """The same as saying "Джарвис" alone (the browser extension's button): "Да, сэр" and wait for the command.
+        Pressed while Jarvis listens or thinks: he stops (an accidental call costs no request)."""
+        if not self.listener or self._cancel_if_busy():
             return
         if self.mic and self.mic.paused:
             self.set_muted(False)
@@ -730,7 +755,14 @@ class Assistant:
             if self.listener:
                 self.listener.to_wait()
             return
-        self.interrupt()
+        task = self._task
+        if task is not None and not task.done():
+            # Not cancelled yet: the request goes on (quietly) unless the recognizer confirms the name.
+            log.info("Кодовое слово во время запроса: проверяю, прежде чем отменить")
+            self._held, self._held_at = task, time.monotonic()
+            self.player.duck = min(self.player.duck, 0.15)
+        else:
+            self.interrupt()
         self._earcon(earcons.WAKE)
         self._set_state(State.LISTENING)
 
@@ -788,7 +820,37 @@ class Assistant:
         if utt.source in ("dictation_part", "dictation"):
             self._on_dictation(utt, last=utt.source == "dictation")
             return
+        if self._held is not None and utt.source == "wake":
+            asyncio.create_task(self._hear_over(utt, self._held))
+            return
         self._task = asyncio.create_task(self._process_audio(utt))
+
+    async def _hear_over(self, utt: Utterance, held: asyncio.Task) -> None:
+        """A phrase that began with a wake word while a request was running: a new request cancels that one
+        (handle_text); a false wake word lets it go on as if nothing happened."""
+        try:
+            await self._process_audio(utt)
+        finally:
+            if self._held is held:
+                self._held = None
+                self.player.duck = 1.0
+                if not held.done():
+                    log.info("Имя не подтвердилось: продолжаю прежний запрос")
+                    self._set_state(State.SPEAKING if self.speaker.speaking else State.THINKING)
+
+    def _drop_held(self) -> None:
+        """The name was confirmed (a bare "Джарвис"): the request it was said over is dropped."""
+        if self._held is not None:
+            self.interrupt()
+
+    async def _wait_hold(self) -> None:
+        """A wake word heard over this request is being checked: its answer waits, it may be cancelled."""
+        while self._held is not None and self._held is asyncio.current_task():
+            if time.monotonic() - self._held_at > 20:
+                self._held = None   # never resolved (a lost utterance): go on
+                self.player.duck = 1.0
+                break
+            await asyncio.sleep(0.05)
 
     async def _process_audio(self, utt: Utterance) -> None:
         self._set_state(State.THINKING)
@@ -821,6 +883,7 @@ class Assistant:
         # Outside a wake capture the name must be clear: "кто такой Дарвин" is not "Джарвис".
         query = strip_wake(text, wake.phrases, wake.verify_ratio if utt.source == "wake" else 90)
         if utt.source == "wake" and (len(query) < 2 or is_bare_wake(text, wake.phrases)):
+            self._drop_held()
             await self._bare_wake()
             return
         if len(query) < 2:
@@ -924,6 +987,7 @@ class Assistant:
         except Exception as exc:
             log.exception("Ошибка обработки запроса")
             await self._deliver(Reply(f"Не получилось: {errors.explain(exc)}.", error=True), started, query)
+        await self._wait_hold()
         if self._task is asyncio.current_task():
             self._after_answer(listen_after, expect_answer=self.brain.expects_answer())
 
@@ -932,6 +996,7 @@ class Assistant:
         self._set_state(State.THINKING, f"{what}…")
 
     async def _deliver(self, reply: Reply, started: float, query: str = "") -> bool:
+        await self._wait_hold()
         if reply.error:
             # Said in a few words, also in the tray: the user is never left with a silent stop.
             self._earcon(earcons.ERROR)

@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-import os
 import re
 
 from assistant.core import Card, Deck
@@ -261,7 +260,7 @@ class WebSkill(Skill):
         await run_blocking(ensure_key)
         try:
             await run_blocking(winutil.set_clipboard_text, path)
-            await run_blocking(os.startfile, path)
+            await run_blocking(winutil.open_front, path)
         except Exception as exc:  # noqa: BLE001 - only convenience
             log.debug("Папка расширения не открыта: %s", exc)
         self.app.ui.show_deck(Deck(title="Подключить браузер", cards=[Card("", SETUP_CARD.format(path=path), "")],

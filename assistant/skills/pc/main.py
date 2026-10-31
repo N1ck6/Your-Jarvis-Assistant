@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-import os
 import re
 import socket
 import time
 
 import psutil
 
-from assistant import cmdsandbox, fsaccess
+from assistant import cmdsandbox, fsaccess, winutil
 from assistant.core import Card, Deck
 from assistant.nlu import plural
 from assistant.log import private
@@ -258,14 +257,14 @@ class PcSkill(Skill):
         path = self.found[idx].path
         if not fsaccess.is_allowed(self.app.cfg, path):
             return Reply("Этот файл вне разрешённых папок.")
-        await run_blocking(os.startfile, str(path))  # type: ignore[attr-defined]
+        await run_blocking(winutil.open_front, path)
         return Reply(f"Открываю {path.name}.", reaction="ok", listen_after=False)
 
     async def _do_open_dir(self, s) -> Reply:
         folder, err = self._folder(s.get("dir", ""))
         if err:
             return err
-        await run_blocking(os.startfile, str(folder))  # type: ignore[attr-defined]
+        await run_blocking(winutil.open_front, folder)
         return Reply(f"Открываю папку {fsaccess.display_name(folder)}.", reaction="ok", listen_after=False)
 
 

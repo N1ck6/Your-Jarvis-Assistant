@@ -69,7 +69,8 @@ Python 3.12, Microsoft Visual C++ Runtime, [Ollama](https://ollama.com) с мо�
 | Ctrl+Alt+S | помощь с экраном: выделите область |
 | Ctrl+Alt+K | выключить / включить микрофон |
 
-**Трей**: щелчок — слушать; меню — чат с Джарвисом (текстом), микрофон, мои сценарии, настройки, выход.
+**Трей**: щелчок — слушать, ещё щелчок, пока он слушает или думает, — отменить (то же — кнопка в браузере);
+меню — чат с Джарвисом (текстом), микрофон, мои сценарии, настройки, выход.
 
 ## Браузер
 
@@ -105,7 +106,8 @@ Python 3.12, Microsoft Visual C++ Runtime, [Ollama](https://ollama.com) с мо�
 
 - Свои значения сохраняются в `data/settings.json`, все параметры с описанием — `config/default.toml`.
 - Музыка берётся из папки «Музыка» Windows, подпапки — плейлисты.
-- Свои сценарии «фраза → действия»: трей → «Мои сценарии…» (пример — в [COMMANDS.md](COMMANDS.md#свои-сценарии)).
+- Свои сценарии «фраза → действия»: трей → «Мои сценарии…» — редактор с кнопками в настройках
+  ([COMMANDS.md](COMMANDS.md#свои-сценарии)).
 - Свои навыки: папка в `data/skills/<id>/` с манифестом, фразами и кодом — формат в [SKILLS.md](SKILLS.md).
 
 ## Если что-то не так
@@ -126,7 +128,7 @@ Ollama (`ollama rm qwen3:8b qwen3-vl:4b-instruct`); кэш моделей реч
 ## Для разработчиков
 
 ```powershell
-.venv\Scripts\python -m pytest                       # ~720 тестов: формулировки команд, речь, интерфейс
+.venv\Scripts\python -m pytest                       # ~740 тестов: формулировки команд, речь, интерфейс
 .venv\Scripts\python -m assistant --text             # запросы текстом, без микрофона
 .venv\Scripts\python -m assistant --list-devices     # аудиоустройства
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1   # сборка dist\Jarvis (PyInstaller)

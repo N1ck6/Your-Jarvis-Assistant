@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import webbrowser
+from urllib.parse import quote
 from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import (QBuffer, QByteArray, QEasingCurve, QIODevice, QObject, QPoint, QPointF, QPropertyAnimation, QRect,
@@ -1043,6 +1044,12 @@ def _app_browser() -> str | None:
     return shutil.which("msedge") or shutil.which("chrome")
 
 
+def _open_front(path) -> None:
+    from assistant import winutil
+
+    winutil.open_front(path)
+
+
 def open_settings_window(url: str) -> None:
     """Settings as a small window of their own, centred, without tabs or an address bar (not a browser tab).
     A window that is already open is brought to the front instead of opening a second one."""
@@ -1210,12 +1217,10 @@ class QtUi(QObject):
         screen = menu.addAction("Помочь с экраном  (Ctrl+Alt+S)")
         screen.triggered.connect(lambda: a.submit(a.handle_text("что на экране")))
         menu.addSeparator()
-        from assistant.skills.scenarios.main import scenarios_file
-
-        scen = menu.addAction("Мои сценарии…")
-        scen.triggered.connect(lambda: subprocess.Popen(["notepad.exe", str(scenarios_file())]))
+        scen = menu.addAction("Мои сценарии…")   # the editor in the settings window, not the raw file
+        scen.triggered.connect(lambda: open_settings_window(a.voicelab_url + "#" + quote("Сценарии")))
         notes = menu.addAction("Папка заметок")
-        notes.triggered.connect(lambda: os.startfile(a.cfg.resolve(a.cfg.notes.dir)))  # type: ignore[attr-defined]
+        notes.triggered.connect(lambda: _open_front(a.cfg.resolve(a.cfg.notes.dir)))
         settings = menu.addAction("Настройки…")
         settings.triggered.connect(lambda: open_settings_window(a.voicelab_url))
         menu.addSeparator()

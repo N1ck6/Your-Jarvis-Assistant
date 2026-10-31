@@ -17,6 +17,7 @@ from urllib.parse import unquote
 
 from rapidfuzz import fuzz, process
 
+from assistant import fuzzy
 from assistant.config import Settings
 
 log = logging.getLogger("files")
@@ -272,6 +273,10 @@ def _candidates(roots: list[Path], query: str) -> list[Path]:
     return out
 
 
+def _cyrillic(text: str) -> bool:
+    return bool(re.search(r"[а-яё]", text))
+
+
 def _name_score(query: str, stem: str) -> float:
     if query in stem:
         return 100
@@ -286,7 +291,10 @@ def find(cfg: Settings, name: str, limit: int = 5) -> list[Found]:
     query = name.lower().strip()
     scored: list[tuple[float, Path]] = []
     for p in dict.fromkeys(_candidates(allowed_roots(cfg), query)):
-        score = _name_score(query, p.stem.lower())
+        stem = p.stem.lower()
+        score = _name_score(query, stem)
+        if score < 85 and len(query) >= 4 and _cyrillic(query) != _cyrillic(stem):
+            score = fuzzy.score(query, stem) + 5   # "отчёт квотерли" for "quarterly report": said in Russian letters
         if score >= 85 and is_allowed(cfg, p):
             scored.append((score, p))
     scored.sort(key=lambda x: (-x[0], len(x[1].name)))

@@ -355,7 +355,8 @@ class TimersSkill(Skill):
         if missed:
             labels = ", ".join(t.label or "таймер" for t in missed)
             self.app.ui.notify("Пропущенные напоминания", labels)
-            asyncio.create_task(self.app.announce(f"Пока я был выключен, сработали напоминания: {labels}."))
+            if not getattr(self.app, "quiet_start", False):   # started with Windows: the tray note is enough
+                asyncio.create_task(self.app.announce(f"Пока я был выключен, сработали напоминания: {labels}."))
 
     async def stop(self) -> None:
         for task in self._tasks.values():

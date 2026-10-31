@@ -81,3 +81,10 @@ def test_mid_stream_failure_keeps_partial_answer():
 def test_all_fail():
     hub = make_hub(gemini=Fake("gemini", error=ProviderError("x")))
     assert collect(hub, ["gemini"]) == FAIL_TEXT
+
+
+def test_an_answer_of_only_whitespace_goes_to_the_next_provider():
+    """Groq with web search sometimes streams just a line break: that is no answer, the next provider answers."""
+    hub = make_hub(groq=Fake("groq", text="\n "), gemini=Fake("gemini", text="Ответ"))
+    assert collect(hub, ["groq", "gemini"]) == "Ответ"
+    assert hub.last_provider == "gemini"

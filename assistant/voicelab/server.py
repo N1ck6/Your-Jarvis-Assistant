@@ -61,6 +61,10 @@ class Host:
         """Applies skill changes at once; None: only after a restart (the page is open without Jarvis)."""
         return None
 
+    def run_phrase(self, text: str) -> bool:
+        """Says a phrase to Jarvis as if spoken (the scenario editor's "Проверить"); False without Jarvis."""
+        return False
+
     def phrasebook(self):
         from assistant.router import PHRASEBOOK, _JsonStore
 
@@ -91,6 +95,10 @@ class AssistantHost(Host):
         if self.app.loop is None:
             return None
         return asyncio.run_coroutine_threadsafe(self.app.reload_skills(), self.app.loop).result(timeout=30)
+
+    def run_phrase(self, text: str) -> bool:
+        self.app.submit(self.app.handle_text(text))
+        return True
 
     def phrasebook(self):
         return self.app.brain.router.phrasebook
@@ -127,6 +135,10 @@ class FolderRequest(BaseModel):
 
 class TextRequest(BaseModel):
     text: str
+
+
+class ScenariosRequest(BaseModel):
+    items: list[dict[str, Any]]
 
 
 class KeyRequest(BaseModel):
@@ -308,7 +320,9 @@ def create_app(host: Host) -> FastAPI:
     @app.post("/api/skills/open-folder")
     def open_skills_folder() -> dict:
         skillpack.USER_DIR.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(skillpack.USER_DIR))  # noqa: S606 - our own data folder
+        from assistant import winutil
+
+        winutil.open_front(skillpack.USER_DIR)
         return {"ok": True}
 
     @app.post("/api/pick-folder")
@@ -345,24 +359,46 @@ def create_app(host: Host) -> FastAPI:
     # ------------------------------------------------------------- scenarios / phrases / AI / keys
     @app.get("/api/scenarios")
     def get_scenarios() -> dict:
-        from assistant.skills.scenarios.main import scenarios_file
+        from assistant.skills.scenarios.main import load, scenarios_file
 
         path = scenarios_file()
-        return {"text": path.read_text(encoding="utf-8"), "path": str(path)}
+        text = path.read_text(encoding="utf-8")
+        try:
+            items, error = load(text), ""
+        except tomllib.TOMLDecodeError as exc:
+            items, error = None, f"Ошибка в файле: {exc}"
+        return {"text": text, "path": str(path), "items": items, "error": error, "live": host.can_restart}
+
+    @app.post("/api/scenarios/items")
+    def post_scenario_items(req: ScenariosRequest) -> dict:
+        """The editor's scenarios: checked, then written as a tidy file."""
+        from assistant.skills.scenarios.main import check, dump, scenarios_file
+
+        try:
+            items = check(req.items)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        scenarios_file().write_text(dump(items), encoding="utf-8")
+        return {"ok": True, "count": len(items), "items": items}
 
     @app.post("/api/scenarios")
     def post_scenarios(req: TextRequest) -> dict:
-        from assistant.skills.scenarios.main import scenarios_file
+        from assistant.skills.scenarios.main import check, load, scenarios_file
 
         try:
-            data = tomllib.loads(req.text)
+            check(load(req.text))
         except tomllib.TOMLDecodeError as exc:
             raise HTTPException(400, f"Ошибка в файле: {exc}") from exc
-        bad = [s.get("name", "?") for s in data.get("scenario", []) if not s.get("phrases")]
-        if bad:
-            raise HTTPException(400, f"У сценария нет фраз: {', '.join(bad)}")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         scenarios_file().write_text(req.text, encoding="utf-8")
-        return {"ok": True, "count": len(data.get("scenario", []))}
+        return {"ok": True, "count": len(load(req.text))}
+
+    @app.post("/api/scenarios/run")
+    def run_scenario(req: TextRequest) -> dict:
+        if not req.text.strip() or not host.run_phrase(req.text.strip()):
+            raise HTTPException(400, "Проверить можно, когда страница открыта из работающего Джарвиса")
+        return {"ok": True}
 
     @app.get("/api/phrasebook")
     def get_phrasebook() -> dict:

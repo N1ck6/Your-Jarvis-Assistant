@@ -277,14 +277,106 @@ async function aiPage(fields) {
           h("div", { class: "panel" }, keyRows)];
 }
 
+// Scenario steps: [key, label, placeholder, kind]; kind: text | number | none | [[value, label], ...]
+const STEP_TYPES = [
+  ["open", "Открыть программу", "телеграм, steam, путь к .exe или steam://…", "text"],
+  ["url", "Открыть сайт", "https://…", "text"],
+  ["close", "Закрыть программу", "браузер", "text"],
+  ["say", "Сказать фразу", "текст", "text"],
+  ["reaction", "Реплика Джарвиса", "", [["ok", "«Слушаюсь, сэр»"], ["reply", "«Да, сэр?»"], ["thanks", "«Всегда рад»"], ["joke", "шутка"], ["game_mode", "игровой режим"]]],
+  ["wait", "Пауза, секунд", "2", "number"],
+  ["timer", "Таймер, минут", "25", "number"],
+  ["media", "Кнопка плеера", "", [["play_pause", "пауза / играть"], ["next", "следующий трек"], ["prev", "предыдущий трек"], ["mute", "выключить звук"], ["unmute", "включить звук"], ["vol_up", "громче"], ["vol_down", "тише"]]],
+  ["music", "Включить музыку", "название трека (пусто — всё вперемешку)", "text"],
+  ["search", "Найти в интернете", "запрос", "text"],
+  ["minimize_all", "Свернуть все окна", "", "none"],
+  ["command", "Любая команда Джарвиса", "например: доброе утро", "text"],
+];
+const stepKind = (st) => STEP_TYPES.find(t => t[0] in st)?.[0] ?? "open";
+
 async function scenariosPage() {
   const sc = await api("/api/scenarios");
-  const area = h("textarea", { spellcheck: "false" }, sc.text);
-  return [h("p", { class: "note" }, "Фраза → действия. Шаги: open, url, close, say, reaction, wait, timer, media, music, search, minimize_all, command. Подсказки — в комментариях файла."),
-          area, h("div", { class: "row", style: "margin-top:10px" }, h("span", { class: "metrics grow" }, sc.path),
-          h("button", { class: "btn primary", onclick: async () => {
-            try { const r = await api("/api/scenarios", { text: area.value }); toast(`Сохранено, сценариев: ${r.count}`); } catch (e) { toast(e.message); }
-          } }, "Сохранить"))];
+  const advanced = () => {
+    const area = h("textarea", { spellcheck: "false" }, sc.text);
+    return h("details", { style: "margin-top:22px" }, h("summary", { class: "note", style: "cursor:pointer" }, "Для опытных: файл сценариев целиком"),
+      area, h("div", { class: "row", style: "margin-top:10px" }, h("span", { class: "metrics grow path" }, sc.path),
+        h("button", { class: "btn ghost", onclick: async () => {
+          try { const r = await api("/api/scenarios", { text: area.value }); toast(`Сохранено, сценариев: ${r.count}`); route("Сценарии"); } catch (e) { toast(e.message); }
+        } }, "Сохранить файл")));
+  };
+  if (!sc.items) return [h("p", { class: "bad" }, sc.error + " — исправьте файл ниже."), advanced()];
+
+  const items = sc.items;
+  let dirty = false;
+  const saveBtn = h("button", { class: "btn primary", disabled: true, onclick: async () => {
+    try {
+      const r = await api("/api/scenarios/items", { items });
+      items.splice(0, items.length, ...r.items); dirty = false; saveBtn.disabled = true; render();
+      toast(`Сохранено, сценариев: ${r.count}. Можно говорить.`);
+    } catch (e) { toast(e.message); }
+  } }, "Сохранить");
+  const changed = () => { dirty = true; saveBtn.disabled = false; };
+  const list = h("div");
+
+  const stepRow = (sc, i) => {
+    const st = sc.steps[i], kind = stepKind(st), type = STEP_TYPES.find(t => t[0] === kind);
+    const setKind = (k) => {
+      const t = STEP_TYPES.find(x => x[0] === k);
+      sc.steps[i] = { [k]: t[3] === "none" ? true : Array.isArray(t[3]) ? t[3][0][0] : "" }; changed(); render();
+    };
+    let value;
+    if (type[3] === "none") value = h("span", { class: "grow" });
+    else if (Array.isArray(type[3])) value = selectEl(type[3], st[kind], v => { st[kind] = v; changed(); });
+    else value = h("input", { type: type[3] === "number" ? "number" : "text", min: 0, step: "any", class: "grow", placeholder: type[2],
+                              value: st[kind] ?? "", oninput: e => { st[kind] = e.target.value; changed(); } });
+    const extra = kind === "timer" ? h("input", { type: "text", placeholder: "что напомнить", value: st.label ?? "", style: "max-width:180px",
+                                                  oninput: e => { st.label = e.target.value; changed(); } }) : null;
+    const move = (d) => { const j = i + d; [sc.steps[i], sc.steps[j]] = [sc.steps[j], sc.steps[i]]; changed(); render(); };
+    return h("div", { class: "list-item" }, h("span", { class: "metrics", style: "width:18px" }, `${i + 1}.`),
+      h("div", { style: "width:210px; flex:none" }, selectEl(STEP_TYPES.map(t => [t[0], t[1]]), kind, setKind)),
+      h("div", { class: "row grow" }, value, extra),
+      h("button", { class: "btn ghost small", title: "Выше", disabled: i === 0, onclick: () => move(-1) }, "↑"),
+      h("button", { class: "btn ghost small", title: "Ниже", disabled: i === sc.steps.length - 1, onclick: () => move(1) }, "↓"),
+      h("button", { class: "btn ghost small", title: "Убрать шаг", onclick: () => { sc.steps.splice(i, 1); changed(); render(); } }, "✕"));
+  };
+
+  const card = (sc, n) => {
+    const phraseInput = h("input", { type: "text", class: "grow", placeholder: "новая фраза, Enter — добавить" });
+    const addPhrase = () => { const v = phraseInput.value.trim(); if (v && !sc.phrases.includes(v)) { sc.phrases.push(v); changed(); render(); } };
+    phraseInput.addEventListener("keydown", e => { if (e.key === "Enter") addPhrase(); });
+    const run = async () => {
+      if (dirty) return toast("Сначала сохраните");
+      try { await api("/api/scenarios/run", { text: sc.phrases[0] }); toast("Выполняю «" + sc.phrases[0] + "»"); } catch (e) { toast(e.message); }
+    };
+    return h("div", { class: "panel", style: "padding:14px 18px; margin-bottom:14px" },
+      h("div", { class: "row" },
+        h("input", { type: "text", class: "grow", style: "font-weight:600", value: sc.name, placeholder: "Название сценария",
+                     oninput: e => { sc.name = e.target.value; changed(); } }),
+        h("button", { class: "btn ghost small", disabled: !sc.phrases.length, title: "Выполнить сейчас, как будто вы сказали первую фразу", onclick: run }, "▶ Проверить"),
+        h("button", { class: "btn ghost small", onclick: () => { if (confirm(`Удалить сценарий «${sc.name}»?`)) { items.splice(n, 1); changed(); render(); } } }, "Удалить")),
+      h("h3", {}, "Когда я скажу «Джарвис, …»"),
+      h("div", { class: "row" }, sc.phrases.map((p, i) => h("span", { class: "chip" }, p, " ",
+        h("a", { href: "#", title: "Убрать", style: "color:var(--muted);text-decoration:none",
+                 onclick: e => { e.preventDefault(); sc.phrases.splice(i, 1); changed(); render(); } }, "✕")))),
+      h("div", { class: "row", style: "margin-top:8px" }, phraseInput, h("button", { class: "btn ghost small", onclick: addPhrase }, "Добавить фразу")),
+      h("h3", {}, "Он ответит"),
+      h("input", { type: "text", value: sc.say, placeholder: "необязательно — иначе короткое «Слушаюсь, сэр»", oninput: e => { sc.say = e.target.value; changed(); } }),
+      h("h3", {}, "И сделает по порядку"),
+      sc.steps.length ? sc.steps.map((_, i) => stepRow(sc, i)) : h("p", { class: "note" }, "Пока ничего — добавьте шаг."),
+      h("button", { class: "btn ghost small", onclick: () => { sc.steps.push({ open: "" }); changed(); render(); } }, "+ Шаг"));
+  };
+
+  const render = () => list.replaceChildren(...(items.length ? items.map(card) : [h("p", { class: "note" }, "Сценариев пока нет.")]));
+  render();
+  return [h("p", { class: "note" }, "Сценарий — ваша фраза и что Джарвис сделает в ответ: откроет программы и сайты, включит музыку, поставит таймер, выполнит любые свои команды. Работает сразу после «Сохранить», без перезапуска."),
+          list,
+          h("div", { class: "row", style: "position:sticky; bottom:0; padding:12px 0; background:var(--bg)" },
+            h("button", { class: "btn ghost", onclick: () => {
+              items.push({ name: "Новый сценарий", phrases: [], say: "", steps: [{ open: "" }] }); changed(); render();
+              list.lastChild.scrollIntoView({ behavior: "smooth" }); list.lastChild.querySelector("input").select();
+            } }, "+ Новый сценарий"),
+            h("span", { class: "grow" }), saveBtn),
+          advanced()];
 }
 
 async function phrasesPage() {

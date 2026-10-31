@@ -12,6 +12,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz, process
 
+from assistant import fuzzy
 from assistant.nlu import normalize_command, plural
 from assistant.skills.base import Intent, Reply, Skill, Tool
 
@@ -64,15 +65,25 @@ class MusicSkill(Skill):
             self._stamp = stamp
         return self._tracks
 
-    def find(self, name: str) -> Path | None:
+    def lookup(self, name: str) -> tuple[fuzzy.Pick, dict[str, Path]]:
+        """The track the user named: English titles said in Russian ("трабл" -> Trouble) and misheard sounds
+        count; two close titles, or only a doubtful one, come back as `close` to ask about."""
+        found = fuzzy.Pick()
+        by_title: dict[str, Path] = {}
         if not name:
-            return None
+            return found, by_title
         for rescan in (False, True):  # not found: maybe the song was added since the last look
-            tracks = self.tracks(rescan)
-            hit = process.extractOne(normalize_command(name), tracks.keys(), scorer=fuzz.WRatio, score_cutoff=80)
-            if hit:
-                return tracks[hit[0]]
-        return None
+            by_title = {}
+            for p in self.tracks(rescan).values():
+                by_title.setdefault(Path(p).stem, Path(p))
+            found = fuzzy.pick(name, by_title)
+            if found.best or found.close:
+                break
+        return found, by_title
+
+    def find(self, name: str) -> Path | None:
+        found, by_title = self.lookup(name)
+        return by_title[found.best] if found.best else None
 
     def playlists(self) -> dict[str, Path]:
         folder = self._folder()
@@ -171,9 +182,11 @@ class MusicSkill(Skill):
             order = random.sample(tracks, len(tracks))
             title = "музыку"
         else:
-            first = self.find(name)
-            if first is None:
-                return Reply(f"Не нашёл трек «{name}» в папке с музыкой.")
+            exact = intent.slots.get("path")
+            found, by_title = (fuzzy.Pick(), {}) if exact else self.lookup(name)
+            if not exact and found.best is None:
+                return self._ask_which(name, found.close, by_title)
+            first = Path(str(exact)) if exact else by_title[found.best]
             order = [first, *[t for t in tracks if t != first]]
             title = first.stem
         if not player.play(order):
@@ -186,6 +199,29 @@ class MusicSkill(Skill):
 
         return Reply(f"Включаю {title}.", reaction="ok", tool_result=f"играет {title}", listen_after=False,
                      undo=stop_again)
+
+    def _ask_which(self, name: str, close: list[str], by_title: dict[str, Path]) -> Reply:
+        """Not sure which song was meant: ask instead of playing the wrong one."""
+        if not close:
+            return Reply(f"Не нашёл трек «{name}» в папке с музыкой.", tool_result="не найден")
+        log.info("Трек «%s» неоднозначен: %s", name, close)
+
+        async def play(title: str) -> Reply:
+            return await self.handle(Intent(self.name, "play", {"name": title, "path": str(by_title[title])}, title))
+
+        if len(close) == 1:
+            async def yes() -> Reply:
+                return await play(close[0])
+
+            return Reply(f"Точно такого трека нет. Включить «{close[0]}»?", confirm=yes,
+                         tool_result=f"спросил, включить ли {close[0]}")
+
+        async def which(answer: str) -> Reply | None:
+            title = fuzzy.choose(answer, close)
+            return await play(title) if title else None
+
+        options = " или ".join(f"«{t}»" for t in close[:2])
+        return Reply(f"Включить {options}?", ask=which, tool_result=f"спросил: {options}")
 
 
 def create() -> Skill:

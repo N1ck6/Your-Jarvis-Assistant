@@ -33,7 +33,7 @@ def _single_instance(wait_sec: float = 0) -> object | None:
             f.close()
             if time.monotonic() >= deadline:
                 return None
-            time.sleep(0.5)
+            time.sleep(0.1)   # a handover waits here: take over as soon as the old one is gone
 
 
 def _start_hotkeys(assistant, cfg: Settings):
@@ -130,6 +130,8 @@ def main() -> None:
     # Restarted by itself on new code (selfupdate): silent, with a notification about what changed.
     parser.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--updated", action="store_true", help=argparse.SUPPRESS)
+    # Started by a running Jarvis to replace him: load first, take the lock (and the microphone) when he exits.
+    parser.add_argument("--handover", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     setup_logging(args.verbose)
@@ -146,10 +148,12 @@ def main() -> None:
     if args.voicelab:
         return _voicelab_only(cfg)
 
-    lock = _single_instance(wait_sec=20 if args.wait_lock else 0)
-    if lock is None:
-        log.error("Джарвис уже запущен (см. значок в трее).")
-        sys.exit(1)
+    lock = None
+    if not args.handover:
+        lock = _single_instance(wait_sec=20 if args.wait_lock else 0)
+        if lock is None:
+            log.error("Джарвис уже запущен (см. значок в трее).")
+            sys.exit(1)
 
     from assistant.assistant import Assistant
 
@@ -159,6 +163,8 @@ def main() -> None:
         assistant = Assistant(cfg, ui, use_mic=not args.text)
         assistant.quiet_start = _quiet_start(args, cfg)
         assistant.updated = args.updated
+        if lock is None:
+            lock = _take_over(assistant)
         core = CoreThread(assistant)
         done = threading.Event()
         assistant.on_exit = done.set
@@ -189,6 +195,8 @@ def main() -> None:
     assistant = Assistant(cfg, ui)
     assistant.quiet_start = _quiet_start(args, cfg)
     assistant.updated = args.updated
+    if lock is None:
+        lock = _take_over(assistant)
     core = CoreThread(assistant)
 
     def quit_app() -> None:
@@ -206,6 +214,26 @@ def main() -> None:
     if core.is_alive():
         core.stop()
     sys.exit(code)
+
+
+def _take_over(assistant):
+    """Handover: the slow part (models, morphology) while the old Jarvis still works, then his lock when he exits."""
+    import time
+
+    from assistant import nlu, selfupdate
+
+    t = time.perf_counter()
+    assistant.load_models()
+    nlu._morph()
+    selfupdate.mark_ready()
+    log.info("Загружен за %.1f с, жду, пока прежний Джарвис освободится", time.perf_counter() - t)
+    lock = _single_instance(wait_sec=900)
+    selfupdate.clear()
+    if lock is None:
+        log.error("Прежний Джарвис так и не закрылся: выхожу")
+        sys.exit(1)
+    log.info("Принял работу")
+    return lock
 
 
 def _quiet_start(args, cfg: Settings) -> bool:

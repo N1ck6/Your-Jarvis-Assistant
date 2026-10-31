@@ -40,7 +40,11 @@ def make_app(monkeypatch, heads, error=""):
     app.notes = []
     app.ui = type("Ui", (), {"notify": lambda self, title, text: app.notes.append(text)})()
     app.restarts = []
-    app.restart = lambda quiet=False, updated=False: app.restarts.append((quiet, updated))
+
+    async def handover(quiet, updated):
+        app.restarts.append((quiet, updated))
+        return True
+    app._handover = handover
     seq = iter(heads)
     last = {"v": None}
 
@@ -83,3 +87,51 @@ def test_busy_jarvis_is_not_idle():
     assert app.idle_for() == 0.0
     app.music.state = "stopped"
     assert app.idle_for() > 0
+
+
+class FakeProc:
+    def __init__(self, exit_code=None):
+        self.pid, self.exit_code, self.killed = 4242, exit_code, False
+
+    def poll(self):
+        return self.exit_code
+
+    def kill(self):
+        self.killed = True
+
+
+def test_handover_waits_for_the_new_jarvis_then_exits(monkeypatch):
+    app = make_app(monkeypatch, ["a"])
+    del app._handover
+    proc = FakeProc()
+    ready = iter([False, False, True])
+    monkeypatch.setattr(selfupdate, "spawn", lambda root, quiet, updated: proc)
+    monkeypatch.setattr(selfupdate, "is_ready", lambda pid: next(ready, True))
+    monkeypatch.setattr(selfupdate, "clear", lambda: None)
+    exits = []
+    app.on_exit = lambda: exits.append(True)
+    assert asyncio.run(app._handover(True, True)) is True
+    assert exits == [True]
+
+
+def test_a_new_jarvis_that_dies_while_loading_leaves_this_one(monkeypatch):
+    app = make_app(monkeypatch, ["a"])
+    del app._handover
+    monkeypatch.setattr(selfupdate, "spawn", lambda root, quiet, updated: FakeProc(exit_code=1))
+    monkeypatch.setattr(selfupdate, "is_ready", lambda pid: False)
+    monkeypatch.setattr(selfupdate, "clear", lambda: None)
+    exits = []
+    app.on_exit = lambda: exits.append(True)
+    assert asyncio.run(app._handover(True, True)) is False
+    assert exits == [] and app.notes
+
+
+def test_ready_file_names_the_new_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(selfupdate, "READY", tmp_path / "handover.ready")
+    import os
+
+    assert not selfupdate.is_ready(os.getpid())
+    selfupdate.mark_ready()
+    assert selfupdate.is_ready(os.getpid()) and not selfupdate.is_ready(os.getpid() + 1)
+    selfupdate.clear()
+    assert not selfupdate.is_ready(os.getpid())

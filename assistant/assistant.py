@@ -128,7 +128,7 @@ class Assistant:
         self.on_exit: Callable[[], None] = lambda: None
         # Started with Windows: no greeting and nothing spoken at startup (missed reminders go to the tray).
         self.quiet_start = False
-        self.updated = False     # restarted by itself on new code: say so in a notification
+        self.updated = False     # restarted by itself on new code (logged)
 
         self.dialog = Dialog(cfg.assistant.dialog_ttl_sec, cfg.assistant.dialog_max_turns)
         self.llm = LlmHub(cfg.llm)
@@ -174,7 +174,9 @@ class Assistant:
 
     # ------------------------------------------------------------------ startup
     def load_models(self) -> None:
-        """Slow part (seconds): run before the loop starts."""
+        """Slow part (seconds): run before the loop starts (or while the previous Jarvis still works: handover)."""
+        if self.stt is not None:
+            return   # loaded already, before the handover
         t = time.perf_counter()
         self.stt = create_stt(self.cfg.stt.engine, self.cfg.stt.model, self.cfg.stt.quantization)
         self.stt.warmup()
@@ -243,8 +245,7 @@ class Assistant:
             from assistant import selfupdate
             from assistant.paths import ROOT
 
-            what = await asyncio.to_thread(selfupdate.subject, ROOT)
-            self.ui.notify("Джарвис обновлён", what[:200] or "Перезапущен с новым кодом")
+            log.info("Обновлён: %s", await asyncio.to_thread(selfupdate.subject, ROOT))
         if self.cfg.voice.greet_on_start and self.pack and not self.quiet_start:
             clip = self.pack.greeting()
             if clip:
@@ -308,7 +309,8 @@ class Assistant:
         return 0.0 if busy else time.monotonic() - self._state_at
 
     async def _watch_code(self) -> None:
-        """A new commit in Jarvis's folder (an edit, a git pull): restart on it once he has been idle a while."""
+        """A new commit in Jarvis's folder (an edit, a git pull): checked at once, while he works; then a handover
+        to the new code once he has been idle a while (see selfupdate)."""
         from assistant import selfupdate
         from assistant.paths import ROOT
 
@@ -321,22 +323,56 @@ class Assistant:
             now = await asyncio.to_thread(selfupdate.head, ROOT)
             if not self.cfg.ui.restart_on_update or now in (None, seen, failed):
                 continue
-            log.info("Новый код (%s): перезапущусь, когда буду свободен", now[:7])
-            while self.idle_for() < 20:
-                await asyncio.sleep(2)
-            latest = await asyncio.to_thread(selfupdate.head, ROOT)
-            if latest != now:
-                continue     # another commit came while waiting: check that one
+            log.info("Новый код (%s): проверяю, пока работаю", now[:7])
             error = await asyncio.to_thread(selfupdate.check, ROOT)
+            if await asyncio.to_thread(selfupdate.head, ROOT) != now:
+                continue     # another commit came during the check: check that one
             if error:
                 failed = now
                 log.error("Новый код не запускается, остаюсь на прежнем: %s", error)
                 self.ui.notify("Джарвис не обновился", f"В новом коде ошибка: {error[:180]}")
                 continue
-            if self.idle_for() < 5:
-                continue     # the user called him during the check
-            self.restart(quiet=True, updated=True)
-            return
+            log.info("Код проверен: перезапущусь, когда буду свободен")
+            while self.idle_for() < 15:
+                await asyncio.sleep(1)
+            if await asyncio.to_thread(selfupdate.head, ROOT) != now:
+                continue
+            if await self._handover(quiet=True, updated=True):
+                return
+            failed = now
+
+    async def _handover(self, quiet: bool, updated: bool) -> bool:
+        """Starts the new Jarvis next to this one: it loads its models while this one keeps answering, and takes
+        the microphone, tray and hotkeys the moment this one exits: about a second without Jarvis instead of ~10.
+        False if it did not come up (this one stays)."""
+        from assistant import selfupdate
+        from assistant.paths import ROOT
+
+        if getattr(self, "_handing_over", False):
+            return False
+        self._handing_over = True
+        try:
+            selfupdate.clear()
+            proc = await asyncio.to_thread(selfupdate.spawn, ROOT, quiet, updated)
+            log.info("Новый Джарвис загружается рядом (pid %d)", proc.pid)
+            deadline = time.monotonic() + 180
+            while not selfupdate.is_ready(proc.pid):
+                if proc.poll() is not None or time.monotonic() > deadline:
+                    if proc.poll() is None:
+                        proc.kill()
+                    log.error("Новый Джарвис не запустился, остаюсь")
+                    self.ui.notify("Джарвис не перезапустился", "Новый экземпляр не загрузился: см. data/logs")
+                    return False
+                await asyncio.sleep(0.3)
+            while self.idle_for() < 1.5:     # the user is talking to this one: finish first
+                if proc.poll() is not None:
+                    return False
+                await asyncio.sleep(0.2)
+            log.info("Передаю работу новому Джарвису")
+            self.on_exit()
+            return True
+        finally:
+            self._handing_over = False
 
     # ------------------------------------------------------------------ skills
     async def reload_skills(self) -> list[str]:
@@ -561,8 +597,18 @@ class Assistant:
             self.tts.release("silero")  # it only spoke while the clone was loading
 
     def restart(self, quiet: bool = False, updated: bool = False) -> None:
-        """Starts a fresh instance (it waits for this one to release the lock) and exits. quiet: no greeting;
-        updated: it says in a notification that it runs the new code."""
+        """A fresh instance takes over (settings that need a restart): loaded next to this one, see _handover."""
+        if self.loop is not None and self.loop.is_running():
+            self.submit(self._restart_soon(quiet, updated))
+        else:
+            self._restart_cold(quiet, updated)
+
+    async def _restart_soon(self, quiet: bool, updated: bool) -> None:
+        if not await self._handover(quiet, updated):
+            self._restart_cold(quiet, updated)
+
+    def _restart_cold(self, quiet: bool = False, updated: bool = False) -> None:
+        """Starts a fresh instance (it waits for this one to release the lock) and exits. quiet: no greeting."""
         import subprocess
         import sys
 

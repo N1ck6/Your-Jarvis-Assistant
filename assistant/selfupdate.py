@@ -1,15 +1,21 @@
-"""Restart on new code: a new commit in Jarvis's folder (an edit committed, or a `git pull`) restarts him by himself
-when he is idle, silently, instead of the user quitting from the tray and starting run.bat again.
+"""Restart on new code: a new commit in Jarvis's folder (an edit committed, or a `git pull`) restarts him by himself,
+silently, instead of the user quitting from the tray and starting run.bat again.
 
-The new code is checked first in a separate process (it compiles and imports): a broken commit leaves the running
-Jarvis as he is and says so in a notification, rather than leaving the user with no Jarvis at all.
+1. The new code is checked at once in a separate process (it compiles and imports) while Jarvis keeps working; the
+   compiled files stay, so the new instance starts faster. A broken commit leaves him as he is (a notification).
+2. When he is idle, the new instance starts next to him and loads its models (~5-8 s) while he still answers.
+3. It says it is ready (data/handover.ready); once he is idle again he exits, and it takes the microphone, the tray
+   and the hotkeys within a second.
 """
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+from assistant.paths import DATA_DIR
 
 log = logging.getLogger("selfupdate")
 
@@ -68,3 +74,35 @@ def check(root: Path) -> str:
         return ""
     lines = [x for x in (out.stderr or out.stdout).strip().splitlines() if x.strip()]
     return lines[-1] if lines else f"код возврата {out.returncode}"
+
+
+# --- handover: the new Jarvis loads next to the running one and takes over when it exits ---
+READY = DATA_DIR / "handover.ready"
+
+
+def spawn(root: Path, quiet: bool, updated: bool) -> subprocess.Popen:
+    """The new instance in handover mode: it loads everything, says it is ready, then waits for the lock."""
+    exe = root / ".venv" / "Scripts" / "pythonw.exe"
+    cmd = [str(exe) if exe.exists() else sys.executable, "-m", "assistant", "--handover"]
+    cmd += ["--quiet"] * quiet + ["--updated"] * updated
+    return subprocess.Popen(cmd, cwd=str(root), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+                            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+
+
+def mark_ready() -> None:
+    READY.parent.mkdir(parents=True, exist_ok=True)
+    READY.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def is_ready(pid: int) -> bool:
+    try:
+        return READY.read_text(encoding="utf-8").strip() == str(pid)
+    except OSError:
+        return False
+
+
+def clear() -> None:
+    try:
+        READY.unlink()
+    except OSError:
+        pass

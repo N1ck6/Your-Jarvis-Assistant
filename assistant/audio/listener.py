@@ -338,7 +338,7 @@ class ListenerCore:
         if self.assistant_speaking:
             word = self.wake.feed_stop(pcm)
             if word:
-                log.info("Похоже на стоп-слово: %s", word)
+                log.debug("Похоже на стоп-слово: %s", word)
                 tail = list(self._segment)[-int(2.5 / self.frame_sec):]
                 audio = np.concatenate(tail).astype(np.float32) / 32768.0
                 self._reset_segment()

@@ -98,7 +98,7 @@ class Hotkeys:
         self._thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
         for hid, (combo, mods, vk) in self._combos.items():
             if user32.RegisterHotKey(None, hid, mods | MOD_NOREPEAT, vk):
-                log.info("Горячая клавиша %s", combo)
+                log.debug("Горячая клавиша %s", combo)
             else:
                 log.warning("Сочетание %s занято другой программой — поменяйте его в настройках", combo)
                 self.failed.append(combo)

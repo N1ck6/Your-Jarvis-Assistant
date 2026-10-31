@@ -97,6 +97,13 @@ class CoreThread(threading.Thread):
             pass
         finally:
             self.loop.run_until_complete(self.assistant.shutdown())
+            # Watchers and timers still waiting (_watch_local, _check_updates, …): cancelled and awaited, so the
+            # exit does not log "Task was destroyed but it is pending" for each of them.
+            rest = [t for t in asyncio.all_tasks(self.loop) if not t.done()]
+            for t in rest:
+                t.cancel()
+            if rest:
+                self.loop.run_until_complete(asyncio.gather(*rest, return_exceptions=True))
             self.loop.close()
 
     def stop(self) -> None:

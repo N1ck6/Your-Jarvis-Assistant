@@ -6,7 +6,7 @@ import logging
 import os
 import sys
 import threading
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 
 from assistant.paths import LOG_DIR
 
@@ -75,10 +75,13 @@ def setup_logging(verbose: bool = False) -> None:
         console.addFilter(_privacy)
         root.addHandler(console)
 
-    file = RotatingFileHandler(LOG_DIR / "assistant.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+    # One file a day, the two previous days kept: enough to look into a mistake, older ones are deleted.
+    file = TimedRotatingFileHandler(LOG_DIR / "assistant.log", when="midnight", backupCount=2, encoding="utf-8",
+                                    delay=True)
     file.setFormatter(fmt)
     file.addFilter(_privacy)
     root.addHandler(file)
 
-    for noisy in ("httpx", "httpx2", "httpcore", "urllib3", "google_genai", "asyncio", "uvicorn.access", "openai", "PIL"):
+    for noisy in ("httpx", "httpx2", "httpcore", "urllib3", "google_genai", "asyncio", "uvicorn.access", "openai", "PIL",
+                  "pymorphy3", "pymorphy2"):
         logging.getLogger(noisy).setLevel(logging.WARNING)

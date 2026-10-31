@@ -9,7 +9,6 @@ import os
 import re
 import subprocess
 import webbrowser
-from urllib.parse import quote
 from typing import TYPE_CHECKING, Callable
 
 from PySide6.QtCore import (QBuffer, QByteArray, QEasingCurve, QIODevice, QObject, QPoint, QPointF, QPropertyAnimation, QRect,
@@ -1217,8 +1216,6 @@ class QtUi(QObject):
         screen = menu.addAction("Помочь с экраном  (Ctrl+Alt+S)")
         screen.triggered.connect(lambda: a.submit(a.handle_text("что на экране")))
         menu.addSeparator()
-        scen = menu.addAction("Мои сценарии…")   # the editor in the settings window, not the raw file
-        scen.triggered.connect(lambda: open_settings_window(a.voicelab_url + "#" + quote("Сценарии")))
         notes = menu.addAction("Папка заметок")
         notes.triggered.connect(lambda: _open_front(a.cfg.resolve(a.cfg.notes.dir)))
         settings = menu.addAction("Настройки…")

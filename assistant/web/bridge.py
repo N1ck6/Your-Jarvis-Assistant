@@ -110,7 +110,8 @@ class Bridge:
         try:
             hello = await self._handshake(conn)
         except (asyncio.TimeoutError, ValueError, Exception) as exc:  # noqa: BLE001 - any failure: drop it
-            log.warning("Расширение браузера не прошло проверку: %s", exc)
+            # Mostly a connection dropped mid-handshake (the browser or Jarvis restarting): it reconnects by itself.
+            log.debug("Расширение браузера: связь оборвалась при проверке: %s", exc)
             return
         if hello is None:
             log.warning("Расширение браузера: неверный ключ связи (перезагрузите расширение)")

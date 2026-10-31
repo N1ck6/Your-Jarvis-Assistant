@@ -37,6 +37,7 @@ TALK_OVER_SOFT = 0.7   # "a little quieter": about -3 dB, still easy to follow
 WAIT_PHRASES = ["Ищу, сэр.", "Минуту, сэр.", "Сейчас узнаю, сэр.", "Проверяю, сэр."]
 BACKGROUND_GAP_SEC = 1.5   # a pause after the user's new request before an earlier answer is spoken
 BACKGROUND_PREFIX = "По прошлому вопросу. "
+FIRST_TOKEN_TIMEOUT_SEC = 45.0   # no answer at all by then (a hung provider): give up instead of "thinking" forever
 # A new request that is about the running one: it is cancelled, not left to answer in the background.
 _CANCELS = re.compile(r"^(стоп|хватит|отмена|отмени|не надо|забудь|нет|не то|замолчи|тихо)\b|я имел в виду|"
                       r"не (это|то) (я )?(спрашивал|просил|имел)|^(ты )?(меня )?не (понял|расслышал)")
@@ -252,6 +253,7 @@ class Assistant:
         asyncio.create_task(self._watch_skills())
         asyncio.create_task(self._check_updates())
         asyncio.create_task(self._watch_code())
+        asyncio.create_task(self._watch_thinking())
         if self.pack is None and self.cfg.voice.pack != "none":
             asyncio.create_task(self._fetch_packs())
         self._set_state(State.IDLE)
@@ -360,6 +362,15 @@ class Assistant:
             if news:
                 self.ui.notify("Обновление Джарвиса", f"На GitHub {news}")
             await asyncio.sleep(6 * 3600)
+
+    async def _watch_thinking(self) -> None:
+        """Safety net: "thinking" (the orange icon) with nothing left working on a request goes back to idle."""
+        while True:
+            await asyncio.sleep(5)
+            working = (self._task is not None and not self._task.done()) or any(not t.done() for t in self._background)
+            if self.state is State.THINKING and not working and time.monotonic() - self._state_at > 10:
+                log.warning("Значок «думаю» остался без запроса: возвращаю в ожидание")
+                self._set_state(State.IDLE)
 
     def idle_for(self) -> float:
         """Seconds Jarvis has been doing nothing (0 while he listens, thinks, speaks, dictates or plays music)."""
@@ -746,10 +757,14 @@ class Assistant:
         """Waits for the answer to start; says "Ищу, сэр" if that takes a while. None if the answer is empty."""
         task = asyncio.current_task()
         self._waiting.add(task)
-        filler = asyncio.create_task(self._wait_phrase(task))
+        filler = asyncio.create_task(self._wait_phrase(task, started))
         try:
-            first = await stream.__anext__()
+            first = await asyncio.wait_for(stream.__anext__(), FIRST_TOKEN_TIMEOUT_SEC)
         except StopAsyncIteration:
+            return None
+        except asyncio.TimeoutError:
+            log.warning("Ответ не начался за %.0f с: бросаю ожидание", FIRST_TOKEN_TIMEOUT_SEC)
+            self.ui.notify("Джарвис: не дождался ответа", "Модель не ответила вовремя — спросите ещё раз")
             return None
         finally:
             self._waiting.discard(task)
@@ -758,11 +773,12 @@ class Assistant:
         log.info("Первый токен через %.2f с (%s)", time.perf_counter() - started, self.llm.last_provider or "-")
         return first
 
-    async def _wait_phrase(self, task: asyncio.Task) -> None:
+    async def _wait_phrase(self, task: asyncio.Task, started: float) -> None:
+        """Counted from the request itself (recognition and routing take a second or two of it)."""
         delay = self.cfg.voice.wait_phrase_sec
         if delay <= 0:
             return
-        await asyncio.sleep(delay)
+        await asyncio.sleep(max(0.3, delay - (time.perf_counter() - started)))
         if (task is self._task and self.state is State.THINKING and not self.speaker.speaking
                 and not (self.listener is not None and self.listener.mode is Mode.CAPTURE)):
             asyncio.current_task().speaking = True   # type: ignore[attr-defined]  # let it finish the phrase
@@ -951,7 +967,7 @@ class Assistant:
             t = time.perf_counter()
             res = await loop.run_in_executor(None, self.stt.recognize, utt.audio)
             text = res.text.strip()
-            log.info("Диктовка: фраза %.1f с за %.0f мс (уверенность %.2f): %s", utt.audio.size / 16000,
+            log.debug("Диктовка: фраза %.1f с за %.0f мс (уверенность %.2f): %s", utt.audio.size / 16000,
                      (time.perf_counter() - t) * 1000, res.confidence, private(text[:120]))
             if text and (res.confidence >= 0.45 or utt.voiced_sec >= 1.0):  # a cough or a click is not a phrase
                 piece = (" " if self._dict_pasted else "") + text
@@ -1009,7 +1025,7 @@ class Assistant:
         own = set(normalize_command(self.speaker.recent_text(), strip_polite=False).split())
         stops = [w for w in heard if w in self.cfg.wake.stop_words and w not in own]
         if not stops:
-            log.info("Стоп-слово «%s» не подтвердилось (слышно: «%s»), продолжаю", word, private(text[:80]))
+            log.debug("Стоп-слово «%s» не подтвердилось (слышно: «%s»), продолжаю", word, private(text[:80]))
             return
         log.info("Прерван словом «%s», слушаю команду", stops[0])
         self.interrupt()
@@ -1106,9 +1122,11 @@ class Assistant:
             return
         if utt.source == "wake":
             if wake.verify_with_stt and text and not find_wake(text, wake.phrases, wake.verify_ratio):
-                log.info("Ложное срабатывание кодового слова, игнорирую")
-                self._set_state(State.IDLE)
-                return
+                if not self._request_without_name(utt, res):
+                    log.info("Ложное срабатывание кодового слова, игнорирую")
+                    self._set_state(State.IDLE)
+                    return
+                log.info("Имени в записи не слышно, но это ясный запрос: выполняю")
             if utt.barge_in:
                 text = self._after_name(text)
         guard, self._echo_guard = self._echo_guard, ""
@@ -1152,6 +1170,17 @@ class Assistant:
             log.info("Чужой голос (сходство %.2f), игнорирую", sim)
             return False
         return True
+
+    @staticmethod
+    def _request_without_name(utt: Utterance, res) -> bool:
+        """The spotter heard the name but the recognizer lost it ("Какого персонажа из Dota 2 называют…"): a long,
+        clear question or command still goes through. Noise and the TV are rarely all of that at once."""
+        from assistant.brain import is_info_question
+        from assistant.nlu import looks_like_command
+
+        norm = normalize_command(res.text)
+        return (not utt.barge_in and res.confidence >= 0.8 and utt.voiced_sec >= 1.2 and len(norm.split()) >= 3
+                and (looks_like_command(norm) or is_info_question(res.text) or res.text.rstrip().endswith("?")))
 
     def _not_for_me(self, utt: Utterance, res) -> bool:
         """The hot window after an answer hears everyone: TV, people in the room, Jarvis's own echo."""

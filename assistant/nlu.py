@@ -181,17 +181,21 @@ _LEADING_FILLER = re.compile(r"^(?:\s*(?:эй|слушай|скажи|пожал
 def _sound(word: str) -> str:
     """Rough sound form for fuzzy name matching: 'Джарвис', 'Жарвес', 'Ярвис' come closer to each other."""
     w = word.lower().replace("ё", "е").replace("дж", "ж").replace("чж", "ж")
-    return re.sub(r"^[яй]", "ж", w)
+    return re.sub(r"^[яйч]", "ж", w)
 
 
 # How the recognizer mangles "Джарвис": Жарвис, Ярвес, Жервес, Джарес, Джарлис (+ case endings).
 # Near words that are NOT the name fail this shape: Дарвин, Харрис, Джерри, Джейсон, Гарвард.
-_NAME_SHAPE = re.compile(r"^(?:(?:дж|ж|чж|ш|й)[аеэиоя]|я)\w{0,4}[сз](?:а|у|е|ом|ы)?$")
+_NAME_SHAPE = re.compile(r"^(?:(?:дж|ж|чж|ш|й)[аеэиоя]|я|чар)\w{0,4}[сз](?:а|у|е|ом|ы)?$")
+# Whole words the recognizer writes for "Джарвис" that the sound rules do not reach.
+_NAME_ALIASES = {"чарльз", "чарлз", "джарльз", "джарльс", "жарльс"}
 
 
 def wake_score(word: str, phrases: list[str], min_ratio: int = 70) -> float:
     """How much a single recognized word looks like the wake word (0..100+); below `min_ratio` it is not the name."""
     word = _LATIN_WORDS.get(word.lower(), word.lower())  # "Jarvis" from the recognizer
+    if word.replace("ё", "е") in _NAME_ALIASES and any(_sound(p).startswith(("жарв", "жерв")) for p in phrases):
+        return 100.0
     raw = max(fuzz.ratio(word, p) for p in phrases)
     if raw >= max(min_ratio, 85):
         return raw

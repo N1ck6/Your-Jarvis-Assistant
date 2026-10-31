@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon.ico" sizes="any">
 <title>Настройки Джарвиса</title>
 <style>
   :root {
@@ -40,6 +42,15 @@
     width: 100%; border-radius: 8px; border: 1px solid var(--line); background: var(--input); color: var(--text);
     padding: 7px 10px; font: inherit; }
   textarea { min-height: 420px; font: 13px/1.5 Consolas, "Cascadia Mono", monospace; resize: vertical; }
+  /* The raw file uses the height of the window, not a small box with its own scroll. */
+  textarea.file { height: calc(100vh - 230px); }
+  /* Scrollbars in the colours of the page (the window, the menu, the file box), light and dark alike. */
+  * { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
   input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -297,7 +308,7 @@ const stepKind = (st) => STEP_TYPES.find(t => t[0] in st)?.[0] ?? "open";
 async function scenariosPage() {
   const sc = await api("/api/scenarios");
   const advanced = () => {
-    const area = h("textarea", { spellcheck: "false" }, sc.text);
+    const area = h("textarea", { spellcheck: "false", class: "file" }, sc.text);
     return h("details", { style: "margin-top:22px" }, h("summary", { class: "note", style: "cursor:pointer" }, "Для опытных: файл сценариев целиком"),
       area, h("div", { class: "row", style: "margin-top:10px" }, h("span", { class: "metrics grow path" }, sc.path),
         h("button", { class: "btn ghost", onclick: async () => {

@@ -175,6 +175,19 @@ class Dialog:
         return users[-2] if len(users) >= 2 else ""
 
 
+# A question about a particular game, program or service: the local model invents its details ("Инвокер — это кнопка
+# в League of Legends"), so it goes to the internet even when the router called it a chat.
+_PRODUCT = re.compile(
+    r"(игр[аеуыо]\w*|в игре|из игры|дот[аеуы]|dota|тот[аеуы] 2|кс ?2|cs ?2|counter|майнкрафт\w*|minecraft|фортнайт\w*|"
+    r"варкрафт\w*|warcraft|геншин\w*|genshin|стим\w*|steam|персонаж\w*|прокаст\w*|билд\w*|скилл\w*|абилк\w*|"
+    r"способност\w* (героя|персонажа)|геро[йяюе]\w* (в|из)|патч\w*|прохождени\w*|босс\w*|квест\w*|"
+    r"в (приложении|программе|сервисе|браузере)|(как|где) в \w+ (включить|отключить|найти|настроить|сделать))", re.I)
+
+
+def about_product(text: str) -> bool:
+    return bool(_PRODUCT.search(text))
+
+
 def is_info_question(text: str) -> bool:
     low = normalize_command(text)
     return not _SMALLTALK.search(low) and bool(_INFO.search(low))
@@ -419,6 +432,9 @@ class Brain:
                 query = f"{base} (поправка: {text})"
         else:
             kind, query, fresh = decision.kind, decision.query or text, decision.fresh
+        if kind == "chat" and (about_product(text) or about_product(query)):
+            log.info("Вопрос о конкретной игре или программе: в интернет, а не локальной модели")
+            kind, fresh = "web", False
         self.last_undo, self.last_route = None, (norm, "answer")
         shown = self.app.show_visual_for(query if revise is not None else text)  # a molecule picture next to it
         picture = shown.kind if shown is not None else ""
@@ -443,7 +459,9 @@ class Brain:
 
             async def go() -> Reply:
                 return await self._run_commands(text, hits, "confirmed")
-            return Reply(f"Правильно понимаю: {what}? Скажите «да».", confirm=go)
+            asked = Reply(f"Правильно понимаю: {what}? Скажите «да».", confirm=go)
+            self._remember_confirm(asked)   # the short "да" after it must not be taken for noise
+            return asked
         replies: list[Reply] = []
         meta = all(skill.name == "system" and intent.action in _META for skill, intent in hits)
         for skill, intent in hits:

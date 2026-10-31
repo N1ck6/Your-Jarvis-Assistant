@@ -69,7 +69,9 @@ def test_broken_code_keeps_the_running_jarvis(monkeypatch):
 
     async def run():
         task = asyncio.create_task(app._watch_code())
-        for _ in range(50):
+        for _ in range(2000):   # the check runs in a worker thread: wait for its verdict, not a fixed number of steps
+            if app.notes:
+                break
             await asyncio.sleep(0)
         task.cancel()
     asyncio.run(run())

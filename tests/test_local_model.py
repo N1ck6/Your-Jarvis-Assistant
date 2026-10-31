@@ -94,3 +94,19 @@ def test_a_guessed_close_is_confirmed_first():
         await brain._run_commands("закрой телеграм", [hit], "skill")     # a module's own pattern: no question
         assert done == ["всё", "всё"]
     asyncio.run(run())
+
+
+def test_questions_about_a_game_or_an_app_go_to_the_internet():
+    from assistant.brain import about_product
+
+    assert about_product("какой прокаст у пуджа в доте")
+    assert about_product("как в телеграме включить тёмную тему")
+    assert not about_product("что такое язык программирования Python")
+    assert not about_product("почему небо голубое")
+
+
+def test_a_request_with_the_name_lost_by_recognition_is_still_done():
+    from assistant import nlu
+
+    assert nlu.wake_score("Чарльз", ["джарвис"]) == 100.0
+    assert nlu.wake_score("часы", ["джарвис"]) == 0

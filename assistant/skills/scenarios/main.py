@@ -1,5 +1,5 @@
 """User scenarios: a phrase -> a sequence of steps. Kept in data/scenarios.toml, edited with buttons in
-Settings -> Сценарии (tray -> "Мои сценарии…"), which writes the file through dump(); the file is re-read on change.
+Settings -> Сценарии, which writes the file through dump(); the file is re-read on change.
 
 Steps: open, url, close, say, reaction, wait, timer, media, music, search, minimize_all, command.
 `command` runs any other Jarvis command, e.g. { command = "доброе утро" }.
@@ -35,7 +35,7 @@ def scenarios_file() -> Path:
 
 
 HEADER = """# Мои сценарии Джарвиса: фраза -> действия по порядку.
-# Удобнее всего менять их в Настройках -> Сценарии (трей -> «Мои сценарии…»): там всё кнопками.
+# Удобнее всего менять их в Настройках -> Сценарии: там всё кнопками.
 # Файл перечитывается сам, перезапуск не нужен.
 #
 # Сценарий:

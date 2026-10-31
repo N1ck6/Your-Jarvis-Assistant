@@ -212,6 +212,15 @@ def create_app(host: Host) -> FastAPI:
             packs[pack_id] = loaded
         return packs[pack_id]
 
+    @app.get("/favicon.ico")
+    def favicon() -> FileResponse:
+        # The settings window (a browser --app window) takes its title-bar and taskbar icon from here.
+        return FileResponse(Path(__file__).parent.parent / "ui" / "jarvis.ico", media_type="image/x-icon")
+
+    @app.get("/icon.svg")
+    def icon_svg() -> FileResponse:
+        return FileResponse(Path(__file__).parent.parent / "ui" / "icon.svg", media_type="image/svg+xml")
+
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(STATIC / "index.html", media_type="text/html; charset=utf-8")

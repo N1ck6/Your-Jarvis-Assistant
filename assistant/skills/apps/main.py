@@ -1,6 +1,7 @@
 """Open applications and websites by voice. Index = Windows Start menu (Get-StartApps) + config aliases."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -38,7 +39,9 @@ class AppsSkill(Skill):
         self._built = 0.0
 
     async def start(self) -> None:
-        await self.refresh()
+        # In the background: the Start menu scan takes ~2 s and the microphone should not wait for it (an app not
+        # found in the meantime triggers a fresh scan anyway).
+        asyncio.create_task(self.refresh())
 
     async def refresh(self) -> None:
         self.index = await run_blocking(self._build_index)

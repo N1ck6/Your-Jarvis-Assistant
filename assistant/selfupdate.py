@@ -85,13 +85,33 @@ def spawn(root: Path, quiet: bool, updated: bool) -> subprocess.Popen:
     exe = root / ".venv" / "Scripts" / "pythonw.exe"
     cmd = [str(exe) if exe.exists() else sys.executable, "-m", "assistant", "--handover"]
     cmd += ["--quiet"] * quiet + ["--updated"] * updated
-    return subprocess.Popen(cmd, cwd=str(root), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+    env = {**os.environ, "JARVIS_HANDOVER_FROM": str(os.getpid())}
+    return subprocess.Popen(cmd, cwd=str(root), env=env, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
                             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+
+
+def spawned_pid() -> int:
+    """The pid the old Jarvis got from Popen. The venv's pythonw.exe is a launcher that runs the real interpreter as
+    its child, so behind it the old Jarvis knows the launcher (our parent), not us."""
+    started_by = os.environ.get("JARVIS_HANDOVER_FROM", "")
+    return os.getpid() if started_by == str(os.getppid()) else os.getppid()
 
 
 def mark_ready() -> None:
     READY.parent.mkdir(parents=True, exist_ok=True)
-    READY.write_text(str(os.getpid()), encoding="utf-8")
+    READY.write_text(str(spawned_pid()), encoding="utf-8")
+
+
+def kill(proc: subprocess.Popen) -> None:
+    """The launcher and the interpreter it started."""
+    import psutil
+
+    try:
+        for child in psutil.Process(proc.pid).children(recursive=True):
+            child.kill()
+    except psutil.Error:
+        pass
+    proc.kill()
 
 
 def is_ready(pid: int) -> bool:

@@ -359,7 +359,7 @@ class Assistant:
             while not selfupdate.is_ready(proc.pid):
                 if proc.poll() is not None or time.monotonic() > deadline:
                     if proc.poll() is None:
-                        proc.kill()
+                        selfupdate.kill(proc)
                     log.error("Новый Джарвис не запустился, остаюсь")
                     self.ui.notify("Джарвис не перезапустился", "Новый экземпляр не загрузился: см. data/logs")
                     return False

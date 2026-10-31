@@ -130,8 +130,20 @@ def test_ready_file_names_the_new_process(tmp_path, monkeypatch):
     monkeypatch.setattr(selfupdate, "READY", tmp_path / "handover.ready")
     import os
 
+    monkeypatch.setenv("JARVIS_HANDOVER_FROM", str(os.getppid()))   # started directly, not through a launcher
+
     assert not selfupdate.is_ready(os.getpid())
     selfupdate.mark_ready()
     assert selfupdate.is_ready(os.getpid()) and not selfupdate.is_ready(os.getpid() + 1)
     selfupdate.clear()
     assert not selfupdate.is_ready(os.getpid())
+
+
+def test_the_ready_mark_names_the_process_the_old_jarvis_started(monkeypatch):
+    """Behind the venv's launcher the old Jarvis holds the launcher's pid (our parent); started directly, ours."""
+    import os
+
+    monkeypatch.setenv("JARVIS_HANDOVER_FROM", str(os.getppid()))
+    assert selfupdate.spawned_pid() == os.getpid()
+    monkeypatch.setenv("JARVIS_HANDOVER_FROM", "1")
+    assert selfupdate.spawned_pid() == os.getppid()

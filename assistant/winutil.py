@@ -190,14 +190,43 @@ def copy_selection(timeout: float = 0.6) -> str | None:
     return text
 
 
+class _GuiThreadInfo(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_uint), ("flags", ctypes.c_uint), ("hwndActive", ctypes.c_void_p),
+                ("hwndFocus", ctypes.c_void_p), ("hwndCapture", ctypes.c_void_p), ("hwndMenuOwner", ctypes.c_void_p),
+                ("hwndMoveSize", ctypes.c_void_p), ("hwndCaret", ctypes.c_void_p), ("rc", ctypes.c_long * 4)]
+
+
+# Native text controls that take WM_PASTE. Notepad++ (Scintilla) ignores a synthetic Ctrl+V (and any synthetic key),
+# a direct paste message works; browsers and other apps keep Ctrl+V (they do not handle WM_PASTE).
+_PASTE_CLASSES = ("scintilla", "edit", "richedit")
+
+
+def focused_control() -> int:
+    """The control with the keyboard focus in the foreground window (0 if unknown)."""
+    tid = win32process.GetWindowThreadProcessId(win32gui.GetForegroundWindow())[0]
+    info = _GuiThreadInfo(cbSize=ctypes.sizeof(_GuiThreadInfo))
+    if not tid or not user32.GetGUIThreadInfo(tid, ctypes.byref(info)):
+        return 0
+    return info.hwndFocus or 0
+
+
 def paste_text(text: str) -> None:
     """Types text into the foreground window through the clipboard, then restores the clipboard."""
     release_modifiers()
     old = save_clipboard()
     set_clipboard_text(text)
     time.sleep(0.03)
-    hotkey("ctrl", "v")
-    time.sleep(0.25)
+    focus = focused_control()
+    try:
+        cls = win32gui.GetClassName(focus).lower() if focus else ""
+    except win32gui.error:
+        cls = ""
+    if cls.startswith(_PASTE_CLASSES):
+        # Synchronous: the text is in before the clipboard is put back. 2 s cap for a hung window.
+        win32gui.SendMessageTimeout(focus, win32con.WM_PASTE, 0, 0, win32con.SMTO_ABORTIFHUNG, 2000)
+    else:
+        hotkey("ctrl", "v")
+        time.sleep(0.25)
     restore_clipboard(old)
 
 

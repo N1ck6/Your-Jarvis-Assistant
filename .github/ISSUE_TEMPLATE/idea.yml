@@ -1,0 +1,17 @@
+name: 💡 Идея или новый навык
+description: Что Джарвису стоит уметь
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Что он должен уметь
+      description: Как бы вы это сказали и что он должен сделать в ответ.
+      placeholder: «Джарвис, напомни, когда закончится загрузка в стиме» — следит за загрузкой и говорит, когда готово.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Зачем
+      description: В какой ситуации это пригодится.

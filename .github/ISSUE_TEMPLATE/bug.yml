@@ -1,0 +1,23 @@
+name: 🐞 Что-то не работает
+description: Джарвис ошибся, не понял команду или упал
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Что случилось
+      description: Что вы сказали или сделали, что ответил Джарвис и что вы ожидали.
+      placeholder: Сказал «Джарвис, сделай дискорд тише», он ответил «Не нашёл такое приложение».
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Журнал
+      description: Последние строки из data/logs/assistant.log (или запустите run_console.bat). Уберите личное, если есть.
+      render: text
+  - type: input
+    id: system
+    attributes:
+      label: Компьютер
+      placeholder: Windows 11, 16 ГБ ОЗУ, RTX 3060, микрофон гарнитуры

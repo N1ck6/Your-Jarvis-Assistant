@@ -288,7 +288,9 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1   # сборка dist
 <summary><b>📜 Лицензии</b></summary>
 <br>
 
-Код — [GPL-3.0](LICENSE.txt): пользоваться, изменять и распространять можно свободно, но копии и доработки
+Copyright © 2026 Nicki ([N1ck6](https://github.com/N1ck6)), [Your-Jarvis-Assistant](https://github.com/N1ck6/Your-Jarvis-Assistant).
+
+Код — [GPL-3.0](LICENSE.txt) (версия 3 или, по вашему выбору, любая более поздняя): пользоваться, изменять и распространять можно свободно, но копии и доработки
 тоже должны оставаться открытыми под GPL-3.0 с указанием автора. Версии до перехода на GPL выходили под MIT.
 
 Модели — со своими лицензиями; в репозиторий входит только голос «Джарвис Lite» (`models/piper`), остальные

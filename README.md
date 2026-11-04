@@ -14,7 +14,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12-6D9BF0?style=for-the-badge&logo=python&logoColor=white&labelColor=0C0F14)](#-для-разработчиков)
 [![ИИ на вашем ПК](https://img.shields.io/badge/%D0%98%D0%98-%D0%BD%D0%B0_%D0%B2%D0%B0%D1%88%D0%B5%D0%BC_%D0%9F%D0%9A-4CC38A?style=for-the-badge&logo=ollama&logoColor=white&labelColor=0C0F14)](#-что-он-умеет)
 [![Последнее обновление](https://img.shields.io/github/last-commit/N1ck6/Your-Jarvis-Assistant?style=for-the-badge&label=%D0%BE%D0%B1%D0%BD%D0%BE%D0%B2%D0%BB%D1%91%D0%BD&color=E0A64A&labelColor=0C0F14)](https://github.com/N1ck6/Your-Jarvis-Assistant/commits/main)
-[![MIT](https://img.shields.io/badge/license-MIT-8B96A8?style=for-the-badge&labelColor=0C0F14)](LICENSE.txt)
+[![GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-8B96A8?style=for-the-badge&labelColor=0C0F14)](LICENSE.txt)
 
 <br>
 
@@ -288,8 +288,11 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1   # сборка dist
 <summary><b>📜 Лицензии</b></summary>
 <br>
 
-Код — MIT. Модели со своими лицензиями, скачиваются при установке и в репозиторий не входят: реплики Джарвиса
-из проекта [Priler/jarvis](https://github.com/Priler/jarvis), Silero TTS и голос «Джарвис Lite» (обучен на синтезе
+Код — [GPL-3.0](LICENSE.txt): пользоваться, изменять и распространять можно свободно, но копии и доработки
+тоже должны оставаться открытыми под GPL-3.0 с указанием автора. Версии до перехода на GPL выходили под MIT.
+
+Модели — со своими лицензиями; в репозиторий входит только голос «Джарвис Lite» (`models/piper`), остальные
+скачиваются при установке. Реплики Джарвиса из проекта [Priler/jarvis](https://github.com/Priler/jarvis), Silero TTS и голос «Джарвис Lite» (обучен на синтезе
 клона по этим репликам, от голоса Piper ruslan) — CC BY-NC-SA 4.0 (только некоммерческое использование),
 ESpeech-TTS-1 — Apache 2.0, GigaAM — MIT, Vosk — Apache 2.0, Silero Stress — MIT, WeSpeaker — Apache 2.0,
 словарь CMU — BSD.

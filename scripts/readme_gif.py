@@ -52,9 +52,9 @@ def P(x: float, y: float) -> tuple[float, float]:
 
 # ---------------------------------------------------------------- layout (1x coordinates)
 MIC = (64, 150)
-STT = (196, 150)          # box centre
-ORB = (378, 150)
-ORB_R = 50
+STT = (190, 150)          # box centre
+ORB = (388, 150)
+ORB_R = 76
 BRANCH_X = 590
 BRANCHES = [(BRANCH_X, 62, "навыки", "окна, музыка, таймеры"),
             (BRANCH_X, 150, "локальная ИИ", "qwen на вашем ПК"),
@@ -106,8 +106,8 @@ DECOR = [
     [(440, 284), (440, 262), (500, 262), (500, 284)],
     [(690, 22), (720, 22), (720, 96), (880, 96)],
     [(690, 280), (730, 280), (730, 206), (880, 206)],
-    [(300, 120), (300, 64), (360, 64)],
-    [(300, 180), (300, 238), (350, 238)],
+    [(284, 116), (284, 56), (312, 56)],
+    [(284, 184), (284, 274), (318, 274)],
 ]
 DECOR_PATHS = [Path2(d) for d in DECOR]
 
@@ -259,29 +259,52 @@ def frame(i: int) -> Image.Image:
         col = mix(BG, SPEAK, (1 - ph) * (0.4 + 0.6 * h_spk))
         d.arc(P(x + 2 - r, y - r) + P(x + 2 + r, y + r), -45, 45, fill=col, width=round(2 * S))
 
-    # the reactor: Jarvis deciding. Turns amber while a request is inside, rings spin.
-    h_orb, _ = heat_at(ORB, 80)
+    # the reactor, drawn like the app icon (assistant/ui/icon.svg, radius 62 there): Jarvis deciding.
+    # Turns amber while a request is inside; the segmented ring and the outer arcs spin.
+    h_orb, _ = heat_at(ORB, 100)
     core = mix(REACTOR, THINK, h_orb)
+    light = mix(GLOW, (255, 226, 170), h_orb)
     ox, oy = ORB
-    dot(g, ORB, ORB_R + 18, mix((0, 0, 0), core, 0.35 + 0.35 * h_orb))
-    d.ellipse(P(ox - ORB_R, oy - ORB_R) + P(ox + ORB_R, oy + ORB_R), fill=(6, 22, 36))
-    d.ellipse(P(ox - ORB_R + 2, oy - ORB_R + 2) + P(ox + ORB_R - 2, oy + ORB_R - 2), outline=core, width=round(2 * S))
-    seg = 25
+    f = ORB_R / 62
+
+    def ring(r: float, color, width: float, a0: float = 0, a1: float = 360) -> None:
+        box_ = P(ox - r * f, oy - r * f) + P(ox + r * f, oy + r * f)
+        if a1 - a0 >= 360:
+            d.ellipse(box_, outline=color, width=round(width * f * S))
+        else:
+            d.arc(box_, a0, a1, fill=color, width=round(width * f * S))
+
+    pulse = 0.5 + 0.5 * math.sin(2 * math.pi * t * 3)
+    dot(g, ORB, ORB_R + 22, mix((0, 0, 0), core, 0.3 + 0.35 * h_orb))
     spin = t * 360
+    for k in range(4):                                   # HUD arcs around the disc, turning the other way
+        a0 = -spin + k * 90
+        ring(72, mix(BG, core, 0.75), 1.6, a0, a0 + 52)
+    d.ellipse(P(ox - ORB_R, oy - ORB_R) + P(ox + ORB_R, oy + ORB_R), fill=(4, 16, 28))
+    ring(58, core, 3)
+    seg = 25
     for k in range(seg):
         a0 = spin + k * 360 / seg
-        d.arc(P(ox - 40, oy - 40) + P(ox + 40, oy + 40), a0, a0 + 360 / seg * 0.7, fill=mix(DEEP, core, 0.85),
-              width=round(7 * S))
-    for k in range(3):
-        a0 = -spin * 2 + k * 120
-        d.arc(P(ox - 31, oy - 31) + P(ox + 31, oy + 31), a0, a0 + 70, fill=mix(GLOW, THINK, h_orb), width=round(2 * S))
-    pulse = 0.5 + 0.5 * math.sin(2 * math.pi * t * 3)
-    dot(g, ORB, 24, mix((0, 0, 0), mix(GLOW, THINK, h_orb), 0.5 + 0.3 * pulse))
-    dot(d, ORB, 22, mix(DEEP, core, 0.9))
-    tri = [P(ox - 14, oy - 8), P(ox + 14, oy - 8), P(ox, oy + 15)]
-    d.polygon(tri, fill=DEEP, outline=mix(GLOW, THINK, h_orb))
-    d.line([tri[0], tri[1], tri[2], tri[0]], fill=mix(GLOW, (255, 236, 200), h_orb), width=round(2 * S), joint="curve")
-    text_c(d, (ox, oy + ORB_R + 16), "Джарвис решает", font(11, True), mix(MUTED, THINK, h_orb))
+        ring(48, mix(DEEP, core, 0.9), 10, a0, a0 + 360 / seg * 0.72)
+    ring(40, light, 2.5)
+    for k in range(14, 0, -1):                           # the core: a radial gradient deep -> reactor -> glow
+        r = 37 * k / 14
+        c = mix(light, core, k / 9) if k <= 9 else mix(core, DEEP, (k - 9) / 5)
+        dot(d, ORB, r * f, c)
+    dot(g, ORB, 30 * f, mix((0, 0, 0), light, 0.45 + 0.35 * pulse))
+
+    def tri_pts(pts):
+        return [P(ox + x * f, oy + y * f) for x, y in pts]
+    outer = tri_pts([(-34, -19), (34, -19), (0, 36)])
+    inner = tri_pts([(-20, -11), (20, -11), (0, 22)])
+    d.polygon(outer, fill=DEEP)
+    d.line([*outer, outer[0]], fill=(4, 16, 28), width=round(5 * f * S), joint="curve")
+    d.line([*outer, outer[0]], fill=light, width=round(3 * f * S), joint="curve")
+    d.line([*inner, inner[0]], fill=light, width=round(3 * f * S), joint="curve")
+    mid = P(ox, oy + 1 * f)
+    d.line([inner[0], mid, inner[1]], fill=light, width=round(3 * f * S), joint="curve")
+    d.line([mid, inner[2]], fill=light, width=round(3 * f * S))
+    text_c(d, (ox, oy + ORB_R + 21), "Джарвис решает", font(11, True), mix(MUTED, THINK, h_orb))
 
     glow = glow.filter(ImageFilter.GaussianBlur(9 * S))
     img = ImageChops.add(img, glow)

@@ -82,7 +82,10 @@ READY = DATA_DIR / "handover.ready"
 
 def spawn(root: Path, quiet: bool, updated: bool) -> subprocess.Popen:
     """The new instance in handover mode: it loads everything, says it is ready, then waits for the lock."""
-    exe = root / ".venv" / "Scripts" / "pythonw.exe"
+    scripts = root / ".venv" / "Scripts"
+    exe = scripts / "Jarvis.exe"  # assistant/named_exe.py: Task Manager shows "Jarvis", not "Python"
+    if not exe.exists():
+        exe = scripts / "pythonw.exe"
     cmd = [str(exe) if exe.exists() else sys.executable, "-m", "assistant", "--handover"]
     cmd += ["--quiet"] * quiet + ["--updated"] * updated
     env = {**os.environ, "JARVIS_HANDOVER_FROM": str(os.getpid())}
@@ -92,7 +95,7 @@ def spawn(root: Path, quiet: bool, updated: bool) -> subprocess.Popen:
 
 def spawned_pid() -> int:
     """The pid the old Jarvis got from Popen. The venv's pythonw.exe is a launcher that runs the real interpreter as
-    its child, so behind it the old Jarvis knows the launcher (our parent), not us."""
+    its child, so behind it the old Jarvis knows the launcher (our parent), not us; Jarvis.exe is one process."""
     started_by = os.environ.get("JARVIS_HANDOVER_FROM", "")
     return os.getpid() if started_by == str(os.getppid()) else os.getppid()
 

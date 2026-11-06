@@ -28,19 +28,38 @@ def _target() -> tuple[str, str]:
     """(program, arguments): the venv's windowless Python, or the frozen exe of an installed build."""
     if getattr(sys, "frozen", False):
         return sys.executable, "--autostart"
-    pythonw = ROOT / ".venv" / "Scripts" / "pythonw.exe"
-    return str(pythonw if pythonw.exists() else Path(sys.executable).with_name("pythonw.exe")), "-m assistant --autostart"
+    return str(app_exe()), "-m assistant --autostart"
+
+
+def app_exe() -> Path:
+    """.venv/Scripts/Jarvis.exe - the venv's interpreter under the name "Jarvis" and Jarvis's icon, so Task Manager
+    shows Jarvis, not "Python" / "pythonw.exe" (assistant/named_exe.py); pythonw.exe when it cannot be made."""
+    scripts = ROOT / ".venv" / "Scripts"
+    pythonw = scripts / "pythonw.exe"
+    if not pythonw.exists():
+        return Path(sys.executable).with_name("pythonw.exe")
+    try:
+        from assistant.named_exe import build
+
+        exe = build(scripts, "Jarvis.exe", "Jarvis", Path(__file__).with_name("ui") / "jarvis.ico",
+                    run=("assistant", ROOT))
+        return exe or pythonw
+    except Exception:
+        log.debug("Jarvis.exe не собран", exc_info=True)
+        return pythonw
 
 
 def is_current(folder: Path | None = None) -> bool:
-    """The shortcut starts Jarvis quietly (--autostart; shortcuts made by older versions lack it)."""
+    """The shortcut starts Jarvis quietly (--autostart; shortcuts made by older versions lack it) through the
+    current program (Jarvis.exe when it can be made)."""
     try:
         import pythoncom
         import win32com.client
 
         pythoncom.CoInitialize()
         link = win32com.client.Dispatch("WScript.Shell").CreateShortcut(str(shortcut_path(folder)))
-        return "--autostart" in (link.Arguments or "")
+        program, _ = _target()
+        return "--autostart" in (link.Arguments or "") and Path(link.TargetPath or "") == Path(program)
     except Exception:
         return True   # cannot read it: leave it as it is
 

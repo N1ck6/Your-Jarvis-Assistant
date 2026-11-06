@@ -282,6 +282,14 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1   # сборка dist
 (понимание фраз), `skills/` (модули команд), `tts/`, `audio/`, `llm/`, `ui/`. Свой модуль: файл в
 `assistant/skills/`, имя в `[skills] enabled` (`config/default.toml`), формулировки в `tests/test_skills.py`.
 
+**Джарвис работает как `.venv\Scripts\Jarvis.exe`** (06.11.2026). Это копия интерпретатора venv (`pythonw.exe`)
+с именем «Jarvis» и значком Джарвиса, поэтому в Диспетчере задач («Процессы», «Автозагрузка приложений») он виден
+под своим именем, а не как «Python» / «pythonw.exe», и одним процессом. Ярлык автозапуска и перезапуск после
+обновления запускают его; `assistant/named_exe.py` собирает его сам, если файла нет, после обновления Python или
+смены значка (нужен `rc.exe` из Windows SDK; без него всё работает через `pythonw.exe`, как раньше). Двойной клик по
+`Jarvis.exe` тоже запускает Джарвиса: строка `.venv\Lib\site-packages\zz_jarvis_start.pth` видит, что exe открыт без
+аргументов, и запускает `-m assistant` из папки проекта.
+
 </details>
 
 <details>

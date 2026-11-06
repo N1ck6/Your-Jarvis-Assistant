@@ -119,7 +119,7 @@ if ($fresh) {
 
 if ($JarvisVoice) {
     Step "PyTorch с CUDA (голос Джарвиса на видеокарте)"
-    & $py -m pip install -q "torch==2.11.0" "torchaudio==2.11.0" --index-url https://download.pytorch.org/whl/cu130
+    & $py -m pip install -q "torch==2.14.1" "torchaudio==2.11.0" --index-url https://download.pytorch.org/whl/cu130
 } else {
     Step "PyTorch для процессора (голос Silero)"
     if (-not (Probe { & $py -c "import torch" })) { & $py -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu }

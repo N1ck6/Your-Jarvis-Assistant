@@ -687,9 +687,10 @@ class Assistant:
         import subprocess
         import sys
 
+        from assistant.autostart import app_exe
         from assistant.paths import ROOT
 
-        exe = ROOT / ".venv" / "Scripts" / "pythonw.exe"
+        exe = app_exe()  # Jarvis.exe: Task Manager shows "Jarvis", not "Python"
         cmd = [str(exe) if exe.exists() else sys.executable, "-m", "assistant", "--wait-lock"]
         cmd += ["--quiet"] * quiet + ["--updated"] * updated
         subprocess.Popen(cmd, cwd=str(ROOT), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)

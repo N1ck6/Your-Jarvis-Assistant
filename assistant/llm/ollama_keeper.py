@@ -22,17 +22,19 @@ MARGIN_MB = 400    # free video memory needed above the model's missing part bef
 
 
 def start_server() -> bool:
-    """Starts Ollama if it is installed (the tray app, else `ollama serve`). True if something was started."""
+    """Starts Ollama if it is installed, quietly: the app as a tray icon only (`ollama app.exe hidden`; without the
+    argument newer versions open their chat window full screen), else `ollama serve` with a hidden console that its
+    model runners inherit (a detached server gave each runner its own visible console window). True if started."""
     app = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama" / "ollama app.exe"
-    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    group = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     try:
         if app.exists():
-            subprocess.Popen([str(app)], creationflags=flags, close_fds=True)
+            subprocess.Popen([str(app), "hidden"], creationflags=group, close_fds=True)
             return True
         exe = shutil.which("ollama")
         if exe:
-            subprocess.Popen([exe, "serve"], creationflags=flags, close_fds=True,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen([exe, "serve"], creationflags=group | getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                             close_fds=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
     except OSError as exc:
         log.warning("Ollama не запустилась: %s", exc)

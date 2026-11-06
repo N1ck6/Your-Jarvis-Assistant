@@ -13,6 +13,15 @@ if not exist ".venv\.jarvis-installed" (
     )
 )
 rem The local model: start Ollama if it is installed but not running (Jarvis works without it, through the cloud).
+rem "hidden": only the tray icon (without it newer Ollama versions open their window full screen).
 tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /I "ollama.exe" >nul
-if errorlevel 1 if exist "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe" start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
-start "" ".venv\Scripts\pythonw.exe" -m assistant %*
+if errorlevel 1 if exist "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe" start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe" hidden
+rem Jarvis.exe (made or updated here if needed): the same as opening it by hand - "Jarvis" in Task Manager.
+".venv\Scripts\python.exe" -c "from assistant.autostart import app_exe; app_exe()" 2>nul
+if not exist ".venv\Scripts\Jarvis.exe" (
+    start "" ".venv\Scripts\pythonw.exe" -m assistant %*
+) else if "%~1"=="" (
+    start "" ".venv\Scripts\Jarvis.exe"
+) else (
+    start "" ".venv\Scripts\Jarvis.exe" -m assistant %*
+)

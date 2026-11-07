@@ -83,6 +83,12 @@ _INFO = re.compile(
     r"найди|узнай|поищи|загугли|посмотри в интернете)"
     r"|новост|курс (доллара|евро|рубля|биткоина)|сколько стоит|цена|счёт матча|счет матча|кто выиграл|последн(ие|яя|ий)"
 )
+# Certainly a search on the internet: the wait phrase goes before routing.
+_SURE_WEB = re.compile(
+    r"^(найди|поищи|загугли|погугли|посмотри) (в интернете|в сети|в гугле|в яндексе)|^(что|какие) (там )?(нового|новости)"
+    r"|новост|курс (доллара|евро|юаня|рубля|биткоина|валют)|сколько (сейчас )?стоит|счет матча|счёт матча|"
+    r"кто выиграл|кто победил|что случилось (в|с|на) "
+)
 # Small talk stays local even if it looks like a question.
 _SMALLTALK = re.compile(
     r"^(как (у тебя )?дела|как ты|как настроение|как жизнь|привет|здравствуй|доброе утро|добрый (день|вечер)|спасибо|"
@@ -262,6 +268,13 @@ class Brain:
             self.pending = (reply.confirm, time.monotonic() + CONFIRM_TTL_SEC, reply.deny)
         if reply.ask is not None:
             self.asking = (reply.ask, time.monotonic() + CONFIRM_TTL_SEC)
+
+    def surely_web(self, text: str) -> bool:
+        """An obvious internet question («какие новости», «сколько стоит …», «найди в интернете …»): «Ищу, сэр» can
+        be said at once, before the router (~2 s) decides. Not when a module takes the phrase or an answer is awaited."""
+        low = normalize_command(text)
+        return (bool(_SURE_WEB.search(low)) and not _SMALLTALK.search(low) and not self.expects_answer()
+                and self.match_skill(text) is None)
 
     def expects_answer(self) -> bool:
         """Jarvis has just asked something: the next short "да" / "хром" must not be filtered out."""
@@ -669,7 +682,7 @@ class Brain:
         # Web search costs ~4k input tokens per question (search results go into the prompt):
         # only fresh data needs it; stable facts the model already knows.
         stream = self.app.llm.stream(self.app.cfg.llm.info_chain, messages, web=fresh)
-        return Reply(stream=self._record(text, stream, cache_key=key, fresh=fresh, asked=asked))
+        return Reply(stream=self._record(text, stream, cache_key=key, fresh=fresh, asked=asked), searching=fresh)
 
     async def _record(self, text: str, stream: AsyncIterator[str], cache_key: str = "",
                       fresh: bool = True, asked: str = "") -> AsyncIterator[str]:

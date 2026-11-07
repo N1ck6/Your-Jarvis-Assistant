@@ -57,6 +57,8 @@ class Reply:
     ask: Callable[[str], Awaitable["Reply | None"]] | None = None
     # Something failed: `speech` says what in a few words; an error cue plays and the tray shows it too.
     error: bool = False
+    # The answer is looked up on the internet (seconds of silence): "Ищу, сэр" is said at once, not after a pause.
+    searching: bool = False
 
 
 @dataclass

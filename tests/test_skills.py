@@ -69,6 +69,67 @@ def test_timer_label(app):
     assert hit[1].slots == {"seconds": 900, "label": "выключить плиту"}
 
 
+def test_weather_city_needs_the_same_name():
+    """The geocoder finds only the village "Мурманский" for "Мурманск": the Latin spelling finds the city;
+    "Питер" is a village in Perm krai unless taken as Санкт-Петербург."""
+    from assistant.skills.weather.main import WeatherSkill
+
+    places = {
+        "Мурманск": [{"name": "Мурманский", "feature_code": "PPL", "latitude": 46.3, "longitude": 47.9}],
+        "murmansk": [{"name": "Murmansk", "feature_code": "PPLA", "population": 295374, "latitude": 68.97,
+                      "longitude": 33.08}],
+        "Санкт-Петербург": [{"name": "Санкт-Петербург", "feature_code": "PPLA", "latitude": 59.94,
+                             "longitude": 30.31}],
+    }
+    asked = []
+
+    class Resp:
+        def __init__(self, name):
+            self.results = places.get(name, [])
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"results": self.results}
+
+    class Client:
+        async def get(self, url, params):
+            asked.append(params["name"])
+            return Resp(params["name"])
+
+    async def run():
+        w = WeatherSkill()
+        assert await w._geocode(Client(), "мурманске") == (68.97, 33.08, "Мурманск")
+        assert (await w._geocode(Client(), "питере"))[:2] == (59.94, 30.31)
+
+    asyncio.run(run())
+    assert "Питер" not in asked
+
+
+def test_weather_says_what_falls():
+    """The forecast names the precipitation and when: «Вечером дождь, вероятность 70 процентов.»"""
+    import datetime as dt
+
+    from assistant.skills.weather.main import _precip_say
+
+    day = (dt.date.today() + dt.timedelta(days=1)).isoformat()
+
+    def data(codes: dict[int, int], prob: int = 70) -> dict:
+        times = [f"{day}T{h:02d}:00" for h in range(24)]
+        return {"hourly": {"time": times, "weather_code": [codes.get(h, 3) for h in range(24)],
+                           "precipitation_probability": [prob if h in codes else 5 for h in range(24)],
+                           "precipitation": [1.0 if h in codes else 0 for h in range(24)]}}
+
+    assert _precip_say(data({19: 63, 20: 61}), 1) == "Вечером дождь, вероятность 70 процентов."
+    assert _precip_say(data({9: 73, 14: 71}), 1) == "Утром и днём снег, вероятность 70 процентов."
+    assert _precip_say(data({9: 73, 14: 61}), 1).startswith("Утром и днём дождь со снегом")
+    assert _precip_say(data({h: 63 for h in range(24)}), 1).startswith("Весь день дождь")
+    assert _precip_say(data({15: 95}), 1).startswith("Днём гроза")
+    assert _precip_say(data({15: 63}, prob=20), 1) == ""          # unlikely: not said
+    assert _precip_say(data({}), 1) == ""
+
+
 def test_weather_city_and_day(app):
     hit = app.brain.match_skill("какая погода будет завтра в нижнем новгороде")
     assert hit[1].slots == {"city": "нижнем новгороде", "day": 1, "part": ""}
@@ -97,6 +158,41 @@ def test_timer_cancel_latest_only(app, tmp_path, monkeypatch):
         reply = await t.handle(t.match("удали все таймеры"))
         assert t.timers == {}
         assert "отмен" in reply.speech.lower()
+
+    asyncio.run(run())
+
+
+def test_reminder_without_time_asks_when(app, tmp_path, monkeypatch):
+    """«напомни купить молоко» has no time: Jarvis asks «Когда напомнить?» and sets it from the answer."""
+    import assistant.skills.timers.main as timers_mod
+
+    monkeypatch.setattr(timers_mod, "FILE", tmp_path / "timers.json")
+    t = next(s for s in app.skills if s.name == "timers")
+    assert app.brain.match_skill("напомни купить молоко")[1].action == "ask_when"
+    assert app.brain.match_skill("поставь таймер")[1].slots["kind"] == "timer"
+    assert app.brain.match_skill("заведи будильник")[1].slots["kind"] == "alarm"
+    hit = app.brain.match_skill("напомни мне что я говорил")
+    assert hit is None or hit[1].action != "ask_when"
+
+    async def run():
+        reply = await t.handle(t.match("напомни купить молоко"))
+        assert reply.speech == "Когда напомнить?" and reply.ask is not None
+        done = await reply.ask("через 20 минут")
+        assert "купить молоко" in done.speech and len(t.timers) == 1
+        reply = await t.handle(t.match("напомни позвонить маме"))
+        done = await reply.ask("завтра в 9")
+        assert "позвонить маме" in done.speech and len(t.timers) == 2
+        reply = await t.handle(t.match("поставь таймер"))
+        assert reply.speech == "На сколько поставить таймер?"
+        done = await reply.ask("5 минут")
+        assert "5 минут" in done.speech and len(t.timers) == 3
+        reply = await t.handle(t.match("напомни выключить плиту"))
+        again = await reply.ask("попозже")
+        assert again.ask is not None and "Не понял время" in again.speech
+        assert await reply.ask("включи музыку погромче и открой браузер") is None   # a new request, not a time
+        # the router called the tool without a time: ask too
+        reply = await t.handle(timers_mod.Intent("timers", "set", {"minutes": 0, "label": "забрать посылку"}))
+        assert reply.speech == "Когда напомнить?"
 
     asyncio.run(run())
 
@@ -183,6 +279,46 @@ def test_apps_resolve_alias(app):
     assert apps.resolve("ютуб")[1] == "https://youtube.com"
     assert apps.resolve("habr.com") == ("habr.com", "https://habr.com")
     assert apps.resolve("несуществующее приложение xyz") is None
+
+
+@pytest.mark.parametrize("text,web", [
+    ("сколько стоит айфон 17", True),
+    ("кто выиграл матч спартак зенит", True),
+    ("кто победил на выборах в японии", True),
+    ("курс юаня", True),
+    ("сколько стоит айфон 17 на озоне", False),   # the browser agent: says what it does itself
+    ("найди в интернете рецепт борща", False),    # opens the search page at once
+    ("что нового в мире", False),                 # the news module
+    ("какая погода завтра", False),          # a module answers at once
+    ("поставь таймер на 5 минут", False),
+    ("как дела", False),
+    ("почему небо голубое", False),          # may well be the local model: no promise to search
+])
+def test_surely_web_says_wait_phrase_early(app, text, web):
+    assert app.brain.surely_web(text) is web
+
+
+def test_app_names_dictionary(app, tmp_path, monkeypatch):
+    from assistant import appnames
+
+    monkeypatch.setattr(appnames, "USER", tmp_path / "app_names.toml")
+    assert appnames.to_cyrillic("discord") == "дискорд"
+    assert appnames.to_cyrillic("steam") == "стим"
+    assert "visual studio code" in appnames.variants("вэ эс код")
+    assert "discord" in appnames.variants("дискорт")                     # near miss
+    assert "obs studio" in appnames.variants("обс")
+
+    apps = next(s for s in app.skills if s.name == "apps")
+    apps.index = {"discord": "C:/discord.lnk", "visual studio code": "C:/code.lnk",
+                  "obsidian": "C:/obsidian.lnk", "notepad++": "C:/npp.lnk"}
+    assert apps.resolve("дискорд")[0] == "discord"
+    assert apps.resolve("вэ эс код")[0] == "visual studio code"
+    assert apps.resolve("обсидиан")[0] == "obsidian"                     # not in the table: read the Russian way
+    assert apps.resolve("нотпад плюс плюс")[0] == "notepad++"
+
+    # the user's own names win and are picked up without a restart
+    (tmp_path / "app_names.toml").write_text('[names]\n"моя игра" = "obsidian"\n', encoding="utf-8")
+    assert apps.resolve("моя игра")[0] == "obsidian"
 
 
 @pytest.mark.parametrize("follow,slots", [

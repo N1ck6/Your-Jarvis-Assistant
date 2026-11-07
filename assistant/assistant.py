@@ -34,7 +34,7 @@ from assistant.voicepack import VoicePack, load_pack
 
 log = logging.getLogger("assistant")
 TALK_OVER_SOFT = 0.7   # "a little quieter": about -3 dB, still easy to follow
-WAIT_PHRASES = ["Ищу, сэр.", "Минуту, сэр.", "Сейчас узнаю, сэр.", "Проверяю, сэр."]
+WAIT_PHRASES = ["Ищу, сэр.", "Сейчас узнаю, сэр.", "Проверяю, сэр."]
 BACKGROUND_GAP_SEC = 1.5   # a pause after the user's new request before an earlier answer is spoken
 BACKGROUND_PREFIX = "По прошлому вопросу. "
 FIRST_TOKEN_TIMEOUT_SEC = 45.0   # no answer at all by then (a hung provider): give up instead of "thinking" forever
@@ -758,11 +758,17 @@ class Assistant:
                 return
             await asyncio.sleep(0.1)
 
-    async def _first_token(self, stream, started: float):
-        """Waits for the answer to start; says "Ищу, сэр" if that takes a while. None if the answer is empty."""
+    async def _first_token(self, stream, started: float, searching: bool = False):
+        """Waits for the answer to start; says "Ищу, сэр" if that takes a while (an internet search: at once).
+        None if the answer is empty."""
         task = asyncio.current_task()
         self._waiting.add(task)
-        filler = asyncio.create_task(self._wait_phrase(task, started))
+        if getattr(task, "waited", False):   # already said before routing
+            searching = False
+            task.waited = False   # type: ignore[attr-defined]  # a second answer of the same request may still need it
+            filler = asyncio.create_task(asyncio.sleep(0))
+        else:
+            filler = asyncio.create_task(self._wait_phrase(task, started, searching))
         try:
             first = await asyncio.wait_for(stream.__anext__(), FIRST_TOKEN_TIMEOUT_SEC)
         except StopAsyncIteration:
@@ -778,12 +784,13 @@ class Assistant:
         log.info("Первый токен через %.2f с (%s)", time.perf_counter() - started, self.llm.last_provider or "-")
         return first
 
-    async def _wait_phrase(self, task: asyncio.Task, started: float) -> None:
-        """Counted from the request itself (recognition and routing take a second or two of it)."""
+    async def _wait_phrase(self, task: asyncio.Task, started: float, searching: bool = False) -> None:
+        """Counted from the request itself (recognition and routing take a second or two of it). A search on the
+        internet takes 5–15 s: the phrase goes at once (0.3 s: a cached or very quick answer needs none)."""
         delay = self.cfg.voice.wait_phrase_sec
         if delay <= 0:
             return
-        await asyncio.sleep(max(0.3, delay - (time.perf_counter() - started)))
+        await asyncio.sleep(0.3 if searching else max(0.3, delay - (time.perf_counter() - started)))
         if (task is self._task and self.state is State.THINKING and not self.speaker.speaking
                 and not (self.listener is not None and self.listener.mode is Mode.CAPTURE)):
             asyncio.current_task().speaking = True   # type: ignore[attr-defined]  # let it finish the phrase
@@ -957,6 +964,8 @@ class Assistant:
 
     def _on_dictation(self, utt: Utterance, last: bool) -> None:
         """A phrase is ready: recognize it and paste it after the previous one, while the user keeps speaking."""
+        if last:   # recording has stopped (key released, second tap, pause): heard at once, before recognition
+            self.player.effect(earcons.DICTATE_END, max(self.cfg.audio.earcon_volume, 0.5))
         prev = self._dict_chain
         self._dict_chain = asyncio.create_task(self._dictation_step(prev, utt, last))
 
@@ -979,8 +988,6 @@ class Assistant:
                 await loop.run_in_executor(None, self._paste_when_keys_free, paste, piece)
                 self._dict_pasted += 1
         if last:
-            if self._dict_pasted:
-                self._earcon(earcons.DONE)
             self._end_dictation()
 
     def _paste_when_keys_free(self, paste: Callable[[str], None], text: str) -> None:
@@ -1245,6 +1252,10 @@ class Assistant:
         extra: list[Reply] = []
         deferred: list = []
         asyncio.current_task().answers = []   # type: ignore[attr-defined]  # what _deliver said, for the history
+        if self.brain.surely_web(query):
+            # «какие новости»: «Ищу, сэр» right away, not after the router's two seconds
+            asyncio.current_task().waited = True   # type: ignore[attr-defined]
+            asyncio.create_task(self._wait_phrase(asyncio.current_task(), started, searching=True))
         try:
             reply = await self.brain.handle(query, addressed=addressed)
             self._history_route = self._route_of_last()
@@ -1308,7 +1319,7 @@ class Assistant:
             text = f"[{reply.reaction}] {reply.speech}".strip()
         elif reply.stream is not None:
             stream = reply.stream.__aiter__()
-            first = await self._first_token(stream, started)
+            first = await self._first_token(stream, started, reply.searching)
             prefix = ""
             if asyncio.current_task() in self._background:
                 await self._my_turn()   # the user asked something else meanwhile: let them finish first

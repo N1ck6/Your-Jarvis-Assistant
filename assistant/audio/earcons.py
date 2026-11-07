@@ -27,4 +27,6 @@ CANCEL = AudioClip(_tone([523, 392], 0.07), SR)
 ERROR = AudioClip(_tone([330, 247], 0.14), SR)
 # Dictation: three rising notes, clearly different from the wake cue; recording starts right after it.
 DICTATE = AudioClip(_tone([587, 784, 1175], 0.07), SR)
+# Dictation over: the same notes falling; plays the moment recording stops.
+DICTATE_END = AudioClip(_tone([1175, 784, 587], 0.07), SR)
 ALARM =AudioClip(np.concatenate([_tone([988, 1319], 0.12, 0.05)] * 3), SR)

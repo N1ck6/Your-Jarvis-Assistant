@@ -39,6 +39,9 @@ class FakeBrain:
     def expects_answer(self):
         return False
 
+    def surely_web(self, text):
+        return False
+
 
 def make_app(heard):
     app = Assistant.__new__(Assistant)
@@ -267,3 +270,34 @@ def test_a_long_search_says_it_is_searching(monkeypatch):
         return app.speaker.said
     said = asyncio.run(run())
     assert said[0] in WAIT_PHRASES and said[1] == "В Москве плюс пять."
+
+
+def test_an_obvious_web_question_says_it_is_searching_before_routing(monkeypatch):
+    """«сколько стоит …»: «Ищу, сэр» while the router is still thinking, and only once."""
+    from assistant.assistant import WAIT_PHRASES
+
+    class RoutingBrain(FakeBrain):
+        def surely_web(self, text):
+            return True
+
+        async def handle(self, text, addressed=True):
+            await asyncio.sleep(0.6)                      # the router
+            heard_before.extend(self.speaker.said)
+
+            async def stream():
+                await asyncio.sleep(0.6)                  # the search
+                yield "Около ста тысяч."
+            return Reply(stream=stream(), listen_after=False, searching=True)
+
+    heard_before = []
+
+    async def run():
+        app = parallel_app(monkeypatch)
+        app.cfg.voice.wait_phrase_sec = 2.5
+        app.brain = RoutingBrain()
+        app.brain.speaker = app.speaker
+        await app.handle_text("сколько стоит айфон 17")
+        return app.speaker.said
+    said = asyncio.run(run())
+    assert heard_before and heard_before[0] in WAIT_PHRASES
+    assert said == [heard_before[0], "Около ста тысяч."]

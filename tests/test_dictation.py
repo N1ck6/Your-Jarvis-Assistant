@@ -98,6 +98,7 @@ def test_phrases_are_typed_in_order_as_they_come():
         await asyncio.sleep(0.3)
         assert pasted == ["Первая фраза.", " Вторая фраза."]        # typed before the dictation ended
         app._on_utterance(part(source="dictation"))
+        assert app.cues == [earcons.DICTATE, earcons.DICTATE_END]   # the end cue at once, before recognition
         await drain(app)
         assert pasted == ["Первая фраза.", " Вторая фраза.", " И третья."] and not app._dictating
     asyncio.run(run())
@@ -129,7 +130,7 @@ def test_tap_goes_hands_free_and_second_tap_stops():
         app.dictation_key_down(lambda t: None)       # second tap
         app.dictation_key_up(0.1)
         await drain(app)
-        assert not app._dictating
+        assert not app._dictating and app.cues[-1] is earcons.DICTATE_END
     asyncio.run(run())
 
 

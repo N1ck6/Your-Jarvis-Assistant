@@ -71,6 +71,18 @@ class Timer:
         return self.alarm or bool(self.repeat) or self.label.startswith("@")
 
 
+# A timer, alarm or reminder asked without its time: "напомни купить молоко", "поставь таймер", "заведи будильник".
+_NO_TIME = re.compile(
+    r"^(?:(?:поставь|поставить|заведи|установи|запусти|включи|сделай)(?: мне)? )?(?P<kind>таймер|будильник|напоминание|"
+    r"напоминалку)(?: (?:мне|пожалуйста))?$|^(?P<wake>разбуди(?: меня)?)$|"
+    r"^(?:(?:поставь|заведи|сделай)(?: мне)? (?:напоминание|напоминалку)|напомни(?:ть)?)(?: мне)?(?: пожалуйста)?"
+    r"(?: (?P<label>.+))?$")
+# "напомни, что я говорил", "напомни, как его зовут" are questions, not reminders.
+_NOT_LABEL = re.compile(r"^(?:что|как|какой|какая|какие|кто|где|когда|сколько|зачем|почему|о ч[её]м|про что|мой|мои|"
+                        r"список|последн)\b")
+_LABEL_LEAD = re.compile(r"^(?:о том,? что|о том,? чтобы|чтобы|что надо|что нужно|надо|нужно|про|о|об)\s+")
+_ASK_TRIES = 2
+
 _ALARM = re.compile(r"\b(разбуди\w*|будильник\w*|подними меня|подъем)\b")
 _CLOCK_HINT = re.compile(r"\b(в|к|около)\s+(\d|половин|четверть)|\bбез \S+ \d|\b(утром|вечером|днем)\b|"
                          r"\b(кажд\w+|по будням|по выходным|ежедневно)\b|\bзавтра\b|\bпослезавтра\b")
@@ -110,6 +122,10 @@ class TimersSkill(Skill):
                 label = self._label(rest) if not alarm else ""
                 return Intent(self.name, "set_at", {"due": when.at.timestamp(), "repeat": when.repeat,
                                                     "alarm": alarm, "label": label}, text)
+        if not _DURATIONS.search(text) and not re.search(r"\d", text):
+            asked = self._no_time(text)
+            if asked is not None:
+                return asked
         many = self._many(text)
         if many:
             return Intent(self.name, "set_many", {"items": many}, text)
@@ -120,6 +136,44 @@ class TimersSkill(Skill):
             label = self._label(rest)
             return Intent(self.name, "set", {"seconds": seconds, "label": label}, text)
         return None
+
+    def _no_time(self, text: str) -> Intent | None:
+        m = _NO_TIME.match(text.strip(" .!?"))
+        if not m:
+            return None
+        label = (m.group("label") or "").strip(" ,.")
+        if label and _NOT_LABEL.match(label):
+            return None
+        label = _LABEL_LEAD.sub("", label)
+        alarm = bool(m.group("wake")) or m.group("kind") == "будильник"
+        kind = "timer" if m.group("kind") == "таймер" else "alarm" if alarm else "reminder"
+        return Intent(self.name, "ask_when", {"kind": kind, "label": label}, text)
+
+    def _ask_when(self, kind: str, label: str, raw: str, tries: int = 0) -> Reply:
+        """Asks for the missing time and sets it from the answer: "через 20 минут", "завтра в 9", "в 18:30"."""
+        question = {"timer": "На сколько поставить таймер?", "alarm": "На какое время поставить будильник?",
+                    "reminder": "Когда напомнить?"}[kind]
+        if tries:
+            question = "Не понял время. Скажите, например: «через 20 минут» или «завтра в 9 утра»."
+
+        async def answer(text: str) -> Reply | None:
+            text = words_to_numbers(text.strip(" .!?"))
+            if _CANCEL.search(text) or re.fullmatch(r"(не надо|не нужно|отмена|забудь|никогда)", text):
+                return Reply("Хорошо, не ставлю.", listen_after=False)
+            alarm = kind == "alarm"
+            if not re.search(r"\bчерез\b", text) and (alarm or _CLOCK_HINT.search(text) or re.match(r"^в\s", text)):
+                when = parse_when(text, alarm=alarm)
+                if when is not None:
+                    return self._set_at(when.at.timestamp(), _keep_case(label, raw), when.repeat, alarm)
+            dur = parse_duration(text if kind == "timer" or re.search(r"\bчерез\b|\bна\b", text) else f"через {text}")
+            if dur and dur[0] > 0:
+                return await self.handle(Intent(self.name, "set", {"seconds": dur[0], "label": label}, raw, raw=raw))
+            if tries + 1 < _ASK_TRIES and (re.search(r"\d|час|минут|секунд|утр|вечер|завтра|сегодня|полчаса", text)
+                                         or len(text.split()) <= 3):
+                return self._ask_when(kind, label, raw, tries + 1)
+            return None     # not an answer about time: handled as a new request
+
+        return Reply(question, ask=answer, tool_result="спросил время")
 
     def _many(self, text: str) -> list[list] | None:
         """"таймер через минуту и другой через две", "таймеры на 5 и 10 минут", "напомни через 10 минут позвонить и
@@ -176,10 +230,14 @@ class TimersSkill(Skill):
 
     # ---------------------------------------------------------------- actions
     async def handle(self, intent: Intent) -> Reply:
+        if intent.action == "ask_when":
+            return self._ask_when(str(intent.slots.get("kind") or "reminder"), str(intent.slots.get("label") or ""),
+                                  intent.raw or intent.text)
         if intent.action == "set":
             seconds = int(intent.slots.get("seconds") or float(intent.slots.get("minutes", 0)) * 60)
-            if seconds <= 0:
-                return Reply("Не понял, на сколько поставить таймер.")
+            if seconds <= 0:   # the router called it without a time: ask, do not give up
+                label = str(intent.slots.get("label") or "")
+                return self._ask_when("reminder" if label else "timer", label, intent.raw or intent.text)
             label = _keep_case(str(intent.slots.get("label") or "").strip(), intent.raw)
             label = label[:1].lower() + label[1:]
             timer = Timer(uuid.uuid4().hex[:8], time.time() + seconds, label, time.time())
@@ -213,7 +271,8 @@ class TimersSkill(Skill):
             alarm = bool(intent.slots.get("alarm"))
             when = parse_when(str(intent.slots.get("when") or ""), alarm=alarm)
             if when is None:
-                return Reply("Не понял время.", tool_result="время не распознано")
+                return self._ask_when("alarm" if alarm else "reminder", str(intent.slots.get("label") or ""),
+                                      intent.raw or intent.text)
             return self._set_at(when.at.timestamp(), str(intent.slots.get("label") or ""), when.repeat, alarm)
         if intent.action == "list":
             if not self.timers:

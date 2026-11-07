@@ -6,9 +6,8 @@ import re
 
 from rapidfuzz import fuzz
 
-from assistant import winutil
+from assistant import appnames, winutil
 from assistant.config import save_override
-from assistant.skills.apps.main import CYR2LAT
 from assistant.skills.base import Intent, Reply, Skill, Tool, run_blocking
 
 _MUCH = re.compile(r"\b(намного|гораздо|сильно|значительно|еще|очень|максимально|по полной)\b")
@@ -87,15 +86,16 @@ class MediaSkill(Skill):
         apps = winutil.audio_apps()
         if not apps:
             return ""
-        translit = self.app.cfg.apps.translit
-        variants = {spoken, translit.get(spoken, ""), spoken.translate(CYR2LAT)}
-        variants |= {v for k, v in translit.items() if fuzz.ratio(spoken, k) >= 85}
+        variants = appnames.variants(spoken, self.app.cfg.apps.translit)
         best = (0.0, "")
         for exe in apps:
             name = exe.removesuffix(".exe")
             friendly = winutil.Window(0, "", 0, exe).friendly.lower()
-            for v in filter(None, variants):
-                score = max(fuzz.ratio(v, name), fuzz.ratio(v, friendly), fuzz.partial_ratio(v, name) if len(v) >= 4 else 0)
+            # "дискорд" against "discord" read the Russian way, for names not in the dictionary
+            reading = fuzz.ratio(spoken, appnames.to_cyrillic(name)) if len(spoken) >= 4 else 0
+            for v in variants:
+                score = max(fuzz.ratio(v, name), fuzz.ratio(v, friendly), fuzz.partial_ratio(v, name) if len(v) >= 4 else 0,
+                            reading)
                 if score > best[0]:
                     best = (score, exe)
         return best[1] if best[0] >= 80 else ""

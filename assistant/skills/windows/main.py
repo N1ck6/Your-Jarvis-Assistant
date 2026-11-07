@@ -9,8 +9,7 @@ import re
 
 from rapidfuzz import fuzz
 
-from assistant import winutil
-from assistant.skills.apps.main import CYR2LAT
+from assistant import appnames, winutil
 from assistant.skills.base import Intent, Reply, Skill, Tool, run_blocking
 
 log = logging.getLogger("windows")
@@ -51,12 +50,7 @@ class WindowsSkill(Skill):
 
     # ------------------------------------------------------------------ lookup
     def _variants(self, name: str) -> list[str]:
-        translit = self.app.cfg.apps.translit
-        out = [name, translit.get(name, ""), name.translate(CYR2LAT)]
-        for k, v in translit.items():
-            if fuzz.ratio(name, k) >= 85:
-                out.append(v)
-        return [v for v in dict.fromkeys(out) if v]
+        return appnames.variants(name, self.app.cfg.apps.translit)
 
     def find(self, name: str) -> list[winutil.Window]:
         """Windows of the app the user named. Empty name / "окно" -> the active window."""

@@ -13,6 +13,8 @@ from pathlib import Path
 
 from rapidfuzz import fuzz, process
 
+from assistant import appnames
+from assistant.appnames import CYR2LAT  # noqa: F401 - other skills import it from here
 from assistant.skills.base import Intent, Reply, Skill, Tool, run_blocking
 
 log = logging.getLogger("apps")
@@ -23,12 +25,6 @@ _OPEN = re.compile(
     r"(?:мне\s+)?(?:приложение|программу|программа|сайт|игру)?\s*(?P<name>.+)$"
 )
 _DOMAIN = re.compile(r"^[\w-]+(\.[\w-]+)+$")
-CYR2LAT = str.maketrans({
-    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i",
-    "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t",
-    "у": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "",
-    "э": "e", "ю": "yu", "я": "ya",
-})
 # Media words that follow "включи" but mean something else.
 _NOT_APPS = {"музыку", "свет", "микрофон", "звук", "таймер", "таймеры", "помодоро", "диктовку", "окно"}
 
@@ -96,17 +92,30 @@ class AppsSkill(Skill):
             return hit[0], aliases[hit[0]]
         if _DOMAIN.match(low):
             return low, "https://" + low
-        candidates = [low, cfg.translit.get(low, ""), low.translate(CYR2LAT)]
-        tr = process.extractOne(low, cfg.translit.keys(), scorer=fuzz.ratio, score_cutoff=85)
-        if tr:
-            candidates.insert(1, cfg.translit[tr[0]])
-        for cand in filter(None, candidates):
+        # the name dictionary (config/app_names.toml + data/app_names.toml): "вэ эс код" -> "visual studio code"
+        candidates = appnames.variants(low, cfg.translit)
+        for cand in candidates:
             if cand in self.index:
                 return cand, self.index[cand]
+        for cand in candidates:
             best = process.extractOne(cand, self.index.keys(), scorer=fuzz.WRatio, score_cutoff=86)
             if best:
                 return best[0], self.index[best[0]]
+        # not in the dictionary: the English names read the Russian way ("обсидиан" ~ "obsidian")
+        if re.search(r"[а-я]", low):
+            readings = self._readings()
+            best = process.extractOne(low, readings.keys(), scorer=fuzz.ratio, score_cutoff=82)
+            if best:
+                key = readings[best[0]]
+                return key, self.index[key]
         return None
+
+    def _readings(self) -> dict[str, str]:
+        """Russian reading of each Latin name in the index -> the name; rebuilt with the index."""
+        if getattr(self, "_readings_of", None) is not self.index:
+            self._readings_map = {appnames.to_cyrillic(k): k for k in self.index if re.search(r"[a-z]", k)}
+            self._readings_of = self.index
+        return self._readings_map
 
     async def handle(self, intent: Intent) -> Reply:
         name = str(intent.slots.get("name", "")).strip()

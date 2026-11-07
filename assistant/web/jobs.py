@@ -24,13 +24,35 @@ log = logging.getLogger("web")
 FILE = DATA_DIR / "web_jobs.json"
 
 
+def every_minutes(repeat: str) -> int:
+    """"every:180" -> 180; any other repeat -> 0."""
+    try:
+        return int(repeat[6:]) if repeat.startswith("every:") else 0
+    except ValueError:
+        return 0
+
+
+def say_every(minutes: int) -> str:
+    """180 -> "каждые 3 часа", 60 -> "каждый час", 30 -> "каждые 30 минут"."""
+    from assistant.nlu import plural
+
+    if minutes % 60:
+        return f"каждые {minutes} {plural(minutes, 'минуту', 'минуты', 'минут')}"
+    hours = minutes // 60
+    if hours == 1:
+        return "каждый час"
+    if hours % 24 == 0 and hours // 24 == 1:
+        return "раз в день"
+    return f"каждые {hours} {plural(hours, 'час', 'часа', 'часов')}"
+
+
 @dataclass
 class WebJob:
     id: str
     task: str                 # what the agent does each time
     hour: int
     minute: int
-    repeat: str = "daily"     # "" (once) | daily | weekdays | weekends | weekly:<0-6>
+    repeat: str = "daily"     # "" (once) | daily | weekdays | weekends | weekly:<0-6> | every:<minutes>
     due: float = 0.0          # unix time of the next run
     last_summary: str = ""    # key numbers of the last result, for comparison
     last_run: float = 0.0
@@ -69,6 +91,9 @@ class Scheduler:
 
     @staticmethod
     def _next(job: WebJob, after: dt.datetime) -> dt.datetime:
+        minutes = every_minutes(job.repeat)
+        if minutes:
+            return after + dt.timedelta(minutes=minutes)
         return next_time(after, job.hour, job.minute, job.repeat)
 
     def add(self, task: str, at: dt.datetime, repeat: str) -> WebJob:

@@ -363,6 +363,42 @@ def test_agent_clicks_after_yes(tmp_path):
     assert ("click", {"id": 2}) in bridge.calls
 
 
+def test_price_watch_asks_how_often(jarvis, tmp_path):
+    """«следи за ценой …» without a schedule: Jarvis asks how often; intervals («каждые 3 часа») are kept."""
+    from assistant.skills.web.main import interval_minutes
+    from assistant.web.jobs import Scheduler, say_every
+
+    assert interval_minutes("каждые три часа") == 180 and interval_minutes("каждый час") == 60
+    assert interval_minutes("раз в 2 часа") == 120 and interval_minutes("ежечасно") == 60
+    assert interval_minutes("каждые полчаса") == 30 and interval_minutes("каждый день в 9") is None
+    assert say_every(180) == "каждые 3 часа" and say_every(60) == "каждый час"
+    assert route(jarvis, "проверяй цену на наушники marshall на озоне") == ("web", "schedule")
+    assert route(jarvis, "каждые 3 часа проверяй цену на airpods на озоне") == ("web", "schedule")
+
+    skill = next(s for s in jarvis.skills if s.name == "web")
+    skill.scheduler = Scheduler(lambda job: asyncio.sleep(0), path=tmp_path / "jobs.json")
+
+    async def run():
+        reply = skill._schedule("следи за ценой на наушники marshall на озоне", "")
+        assert reply.speech.startswith("Как часто проверять") and reply.ask is not None
+        done = await reply.ask("каждые 3 часа")
+        assert "каждые 3 часа" in done.speech
+        job = next(iter(skill.scheduler.jobs.values()))
+        assert job.repeat == "every:180" and "marshall" in job.task and "каждые" not in job.task
+        reply = skill._schedule("следи за ценой на пылесос на маркете", "")
+        done = await reply.ask("в 9 утра")
+        assert len(skill.scheduler.jobs) == 2
+        assert [j.repeat for j in skill.scheduler.jobs.values()][-1] == "daily", done.speech
+        reply = skill._schedule("каждые 10 минут проверяй цену на iphone на озоне", "")
+        assert "Чаще раза в час" in reply.speech
+        assert skill._schedule("каждый день в 9 проверяй цену на airpods на озоне", "").ask is None
+        reply = skill._schedule("следи за ценой на чайник на озоне", "")
+        assert await reply.ask("включи музыку и сделай погромче пожалуйста") is None
+        skill.scheduler.stop()
+
+    asyncio.run(run())
+
+
 def test_scheduled_check_never_asks(tmp_path):
     agent, app, bridge = make_agent([{"action": "click", "id": 2, "why": "оформить"}], tmp_path=tmp_path)
     outcome = asyncio.run(agent.run(Job("закажи на озоне наушники", quiet=True)))
@@ -468,3 +504,44 @@ def test_pending_deny_runs_on_no_and_on_other_phrases(jarvis):
     app.brain.pending = (yes, time.monotonic() + 30, no)
     asyncio.run(app.brain._resolve_pending("да"))
     assert said[-1] == "yes"
+
+
+def test_browser_task_without_the_extension_is_told(jarvis, tmp_path, monkeypatch):
+    """No extension connected: a task says so at once; a scheduled check says it was skipped, once."""
+    import assistant.skills.web.main as web
+    from assistant.skills.base import Intent
+    from assistant.web.jobs import WebJob
+
+    class Offline:
+        connected = False
+
+        async def wait_connected(self, timeout):
+            return False
+
+    class Agent:
+        busy = False
+
+    skill = next(s for s in jarvis.skills if s.name == "web")
+    said = []
+
+    async def announce(text, cue=None):
+        said.append(text)
+
+    monkeypatch.setattr(web, "SEEN", tmp_path / "browser_seen")
+    monkeypatch.setattr(skill, "bridge", Offline())
+    monkeypatch.setattr(skill, "agent", Agent())
+    monkeypatch.setattr(skill.app, "announce", announce, raising=False)
+    (tmp_path / "browser_seen").touch()           # the extension has worked before: the browser is just closed
+
+    async def run():
+        reply = await skill.handle(Intent("web", "task", {"task": "найди на озоне наушники"}, "найди на озоне наушники"))
+        assert "не подключён" in reply.speech and "не подключено" in reply.tool_result
+        job = WebJob("j1", "проверяй цену на наушники на озоне", 9, 0)
+        await skill._scheduled(job)
+        await skill._scheduled(job)
+        assert len(said) == 1 and "Пропускаю проверку" in said[0]
+        skill._offline_told.clear()                  # the browser came back meanwhile
+        await skill._scheduled(job)
+        assert len(said) == 2
+
+    asyncio.run(run())

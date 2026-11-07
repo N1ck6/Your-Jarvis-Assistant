@@ -365,7 +365,8 @@ class WebAgent:
             self.bridge.notify("progress", text="")
             raise
         except BridgeError as exc:
-            outcome = Outcome(False, f"Браузер не дал это сделать: {exc}.")
+            outcome = Outcome(False, "Связь с браузером пропала: браузер закрыт или расширение Джарвиса выключено."
+                              if not self.bridge.connected else f"Браузер не дал это сделать: {exc}.")
         except Exception:
             log.exception("Задача в браузере сломалась")
             outcome = Outcome(False, "Задача в браузере сломалась, подробности в логе.")
@@ -543,6 +544,8 @@ class WebAgent:
             if action == "goto":
                 return {"ok": True, **(await self.bridge.call("open", url=str(d.get("url", ""))))}
         except BridgeError as exc:
+            if not self.bridge.connected:
+                raise   # the browser is gone: the task stops and says so, not retries until the time is up
             return {"ok": False, "error": str(exc)}
         return {"ok": False, "error": "неизвестное действие"}
 

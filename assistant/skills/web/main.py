@@ -14,15 +14,18 @@ import re
 
 from assistant.core import Card, Deck
 from assistant.log import private
+from assistant.paths import DATA_DIR
 from assistant.skills.base import Intent, Reply, Skill, Tool, run_blocking
 from assistant.web import policy
 from assistant.web.agent import Job, Outcome, WebAgent, parse_json
 from assistant.web.bridge import EXTENSION_DIR, Bridge, ensure_key
-from assistant.web.jobs import Scheduler, WebJob
+from assistant.web.jobs import Scheduler, WebJob, every_minutes, say_every
 from assistant.web.routes import BUILTIN, Routes
 from assistant.when import parse_when, say_when
 
 log = logging.getLogger("web")
+# Written when the extension first connects: later "not connected" means the browser is closed, not "not installed".
+SEEN = DATA_DIR / "browser_seen"
 
 _ALIASES = sorted({a for s in BUILTIN for a in s.aliases if len(a) > 2 or a in ("вб",)}, key=len, reverse=True)
 _SHOPS = sorted({a for s in BUILTIN if s.kind == "shop" for a in s.aliases}, key=len, reverse=True)
@@ -64,10 +67,34 @@ _CANCEL = re.compile(r"^(?:останови|отмени|прекрати|пре
                      r"искать|агента|браузерного агента|работу в браузере|что делаешь в браузере)$|^хватит искать$")
 _STATUS = re.compile(r"^(?:что|как)\s+(?:там\s+)?(?:с\s+)?(?:поиском|задачей в браузере|браузером|агентом)$|"
                      r"^ты (?:еще|все еще) ищешь$|^(?:долго еще|скоро)( там)?$")
-_EVERY = re.compile(r"\b(?:кажд\w+|ежедневно|по будням|по выходным|раз в день)\b")
+_EVERY = re.compile(r"\b(?:кажд\w+|ежедневно|еженедельно|ежечасно|по будням|по выходным|раз в (?:день|неделю|час|полчаса|пару часов|несколько часов|\d+ \w+))\b")
 _WATCH_VERB = re.compile(r"\b(?:проверяй|проверь|смотри|посмотри|следи|отслеживай|мониторь|узнавай|узнай|ищи|найди|"
                          r"проверять|следить|отслеживать)\b")
-_WATCH = re.compile(r"^(?:следи|отслеживай|мониторь)\s+за\s+")
+# "следи за ценой …", "отслеживай цену …", "проверяй цену …": a repeated check even without "каждый день".
+_WATCH = re.compile(r"^(?:следи|отслеживай|мониторь)\s+за\s+|^(?:отслеживай|проверяй|узнавай|мониторь)\s+(?:мне\s+)?цен")
+# How often, as an interval: "каждый час", "каждые 3 часа", "раз в 2 часа", "каждые полчаса", "ежечасно".
+_INTERVAL = re.compile(r"\b(?:кажд\w+|раз в)\s+(?:(?P<n>\d+|пару|полчаса)\s*)?(?P<unit>час\w*|минут\w*)?(?=\s|$)|\bежечасно\b")
+_WEEKLY = re.compile(r"\b(?:раз в неделю|кажд\w+ неделю|еженедельно)\b")
+_DAILY = re.compile(r"\b(?:раз в день|кажд\w+ день|ежедневно|каждое утро|каждый вечер|по будням|по выходным)\b")
+MIN_EVERY_MIN = 60      # each check is a full agent run (pages + model calls): not more often than hourly
+
+
+def interval_minutes(text: str) -> int | None:
+    """"каждые 3 часа" -> 180, "каждый час" -> 60, "раз в полчаса" -> 30; None if the phrase names no interval."""
+    from assistant.nlu import words_to_numbers
+
+    m = _INTERVAL.search(words_to_numbers(text))
+    if not m:
+        return None
+    if m.group(0) == "ежечасно":
+        return 60
+    n, unit = m.group("n"), m.group("unit") or ""
+    if n == "полчаса":
+        return 30
+    if not unit:
+        return None             # "каждый день", "каждую пятницу": a calendar repeat, not an interval
+    count = 2 if n == "пару" else int(n) if n else 1
+    return count * 60 if unit.startswith("час") else count
 _JOBS_LIST = re.compile(r"^(?:какие|покажи|список)\s+(?:у меня\s+)?(?:задачи|проверки|слежки)\s*(?:в браузере|по расписанию|"
                         r"браузера)?$|^что ты (?:проверяешь|отслеживаешь)")
 _JOBS_CANCEL = re.compile(r"^(?:отмени|удали|убери|выключи|останови)\s+(?:все\s+)?(?:проверк\w+|слежк\w+|отслеживани\w+|"
@@ -95,9 +122,38 @@ SETUP_CARD = """Один раз, минута:
 def _strip_schedule(text: str, spans: tuple[str, ...]) -> str:
     for piece in spans:
         text = text.replace(piece, " ", 1)
+    text = _INTERVAL.sub(" ", text)
+    text = _WEEKLY.sub(" ", _DAILY.sub(" ", text))
     text = _EVERY.sub(" ", text)
     text = re.sub(r"\b(?:в|во)\s+\d{1,2}(?::\d\d)?\b|\b(?:утром|вечером|днем|каждое утро|каждый вечер)\b", " ", text)
     return re.sub(r"\s+", " ", text).strip(" ,")
+
+
+def _plan(text: str, answer: bool = False) -> tuple[dt.datetime, str, tuple[str, ...]] | None:
+    """When and how often a check runs: (first run, repeat, phrase pieces to cut from the task), or None if the phrase
+    does not say. `answer`: the reply to «Как часто проверять?» ("в 9 утра" alone means every day at 9)."""
+    now = dt.datetime.now()
+    minutes = interval_minutes(text)
+    if minutes:
+        return now + dt.timedelta(minutes=1), f"every:{minutes}", ()
+    when = parse_when(text) if re.search(r"\d", text) or not re.search(r"\b(?:утром|вечером|днем)\b", text) else None
+    if when is not None:
+        repeat = when.repeat
+        if not repeat and re.search(r"\b(?:понедельник|вторник|сред[ау]|четверг|пятниц[ау]|суббот[ау]|воскресенье)\b", text):
+            repeat = f"weekly:{when.at.weekday()}"     # "в пятницу в 18:00": every Friday
+        elif not repeat and (_EVERY.search(text) or _WATCH.match(text) or answer):
+            repeat = "daily"
+        return when.at, repeat, when.spans
+    if _WEEKLY.search(text):
+        at = dt.datetime.combine(now.date(), dt.time(10, 0))
+        at = at if at > now else at + dt.timedelta(days=7)
+        return at, f"weekly:{at.weekday()}", ()
+    if _DAILY.search(text) or (answer and re.search(r"\b(?:утром|вечером|днем)\b", text)):
+        hour = 9 if "утр" in text else 19 if "вечер" in text else 10
+        at = dt.datetime.combine(now.date(), dt.time(hour, 0))
+        at = at if at > now else at + dt.timedelta(days=1)
+        return at, ("weekdays" if "будн" in text else "weekends" if "выходн" in text else "daily"), ()
+    return None
 
 
 class WebSkill(Skill):
@@ -106,6 +162,7 @@ class WebSkill(Skill):
         self.agent: WebAgent | None = None
         self.scheduler: Scheduler | None = None
         self._sent_state = ""     # the last state the extension's icon was told
+        self._offline_told: set[str] = set()   # scheduled checks already said to be missed while the browser is away
 
     # ---------------------------------------------------------------- lifecycle
     async def start(self) -> None:
@@ -139,6 +196,12 @@ class WebSkill(Skill):
     def _on_event(self, event: str, data: dict) -> None:
         if event == "connected":
             self._sent_state = ""
+            self._offline_told.clear()
+            try:
+                SEEN.parent.mkdir(parents=True, exist_ok=True)
+                SEEN.touch()
+            except OSError:
+                pass
             self._send_state(self.app.state)
         elif event == "wake":   # the extension's button in the browser toolbar: the same as saying "Джарвис"
             log.info("Кнопка Джарвиса в браузере")
@@ -198,7 +261,7 @@ class WebSkill(Skill):
         if action == "unschedule":
             return self._unschedule(str(intent.slots.get("what") or ""))
         if not await self.bridge.wait_connected(2.0):
-            return await self._setup(already=False)
+            return await self._offline()
         if action == "show":
             return Reply(reaction="ok", speech="Показываю.") if await self.agent.show() else \
                 Reply("Вкладки агента сейчас нет.")
@@ -251,6 +314,15 @@ class WebSkill(Skill):
 
         return Reply(stream=speak())
 
+    async def _offline(self) -> Reply:
+        """A browser task, but no extension is connected: said plainly, never a silent wait."""
+        if not SEEN.exists():
+            return await self._setup(already=False)
+        return Reply("Не могу: браузер с расширением Джарвиса не подключён. Откройте браузер, расширение подключится "
+                     "само, и повторите просьбу. Если расширение удалено, скажите «подключи браузер».",
+                     tool_result="не выполнено: расширение браузера не подключено (браузер закрыт или расширение "
+                                 "выключено); скажи это пользователю", listen_after=False)
+
     async def _setup(self, already: bool) -> Reply:
         from assistant import winutil
 
@@ -265,28 +337,46 @@ class WebSkill(Skill):
             log.debug("Папка расширения не открыта: %s", exc)
         self.app.ui.show_deck(Deck(title="Подключить браузер", cards=[Card("", SETUP_CARD.format(path=path), "")],
                                    done=True, pinned=True))
-        return Reply("Расширение для браузера ещё не подключено. Показал, как поставить его за минуту.",
-                     listen_after=False)
+        return Reply("Для этого нужно расширение Джарвиса в браузере, а оно не подключено. Показал, как поставить "
+                     "его за минуту.", tool_result="не выполнено: расширение браузера не установлено; показана "
+                                                   "инструкция, скажи это пользователю", listen_after=False)
 
     # ---------------------------------------------------------------- scheduled checks
     def _schedule(self, norm: str, raw: str) -> Reply:
-        when = parse_when(norm)
-        now = dt.datetime.now()
-        if when is not None:
-            at, repeat, spans = when.at, when.repeat, when.spans
-            if not repeat and (_EVERY.search(norm) or _WATCH.match(norm)):
-                repeat = "daily"
-        else:
-            hour = 9 if "утр" in norm else 19 if "вечер" in norm else 10
-            at = dt.datetime.combine(now.date(), dt.time(hour, 0))
-            at = at if at > now else at + dt.timedelta(days=1)
-            repeat, spans = ("weekdays" if "будн" in norm else "weekends" if "выходн" in norm else "daily"), ()
-        task = _strip_schedule(norm, spans)
+        task = _strip_schedule(norm, ())
         refusal = policy.check_task(task)
         if refusal:
             return Reply(refusal)
+        plan = _plan(norm)
+        if plan is None:
+            # "следи за ценой наушников на озоне": how often is not said — ask, do not guess
+            return Reply("Как часто проверять: каждый час, раз в несколько часов, раз в день или в определённое время?",
+                         ask=self._ask_often(task), tool_result="спросил, как часто проверять")
+        return self._add_job(task, *plan)
+
+    def _ask_often(self, task: str, tries: int = 0):
+        async def answer(text: str) -> Reply | None:
+            plan = _plan(text, answer=True)
+            if plan is not None:
+                return self._add_job(task, *plan)
+            if tries == 0 and len(text.split()) <= 4:
+                return Reply("Не понял. Скажите, например: «каждые 3 часа» или «каждый день в 9 утра».",
+                             ask=self._ask_often(task, 1))
+            return None     # another request, not an answer
+        return answer
+
+    def _add_job(self, task: str, at: dt.datetime, repeat: str, spans: tuple[str, ...]) -> Reply:
+        task = _strip_schedule(task, spans)
+        minutes = every_minutes(repeat)
+        lead = "Хорошо"
+        if 0 < minutes < MIN_EVERY_MIN:   # each check is a full agent run: hourly at most
+            lead = "Чаще раза в час не стоит: каждая проверка заново открывает сайт. Значит"
+            minutes, repeat = MIN_EVERY_MIN, f"every:{MIN_EVERY_MIN}"
         job = self.scheduler.add(task, at, repeat)
         log.info("Проверка %s: %s", job.id, private(task))
+        if minutes:
+            return Reply(f"{lead}, буду проверять {say_every(minutes)}, первая проверка через минуту. Скажу, если будет "
+                         "что сообщить.", listen_after=False)
         return Reply(f"Хорошо, буду проверять {say_when(at, repeat=repeat)}. Скажу, если будет что сообщить.",
                      listen_after=False)
 
@@ -294,7 +384,8 @@ class WebSkill(Skill):
         jobs = list(self.scheduler.jobs.values()) if self.scheduler else []
         if not jobs:
             return Reply("Проверок по расписанию нет.")
-        lines = [f"- {j.task} — {say_when(dt.datetime.fromtimestamp(j.due), repeat=j.repeat)}" for j in jobs]
+        lines = [f"- {j.task} — {say_every(every_minutes(j.repeat)) if every_minutes(j.repeat) else say_when(dt.datetime.fromtimestamp(j.due), repeat=j.repeat)}"
+                 for j in jobs]
         self.app.ui.show_deck(Deck(title="Проверки в браузере", cards=[Card("", "\n".join(lines), "")], done=True,
                                    pinned=True))
         n = len(jobs)
@@ -325,6 +416,10 @@ class WebSkill(Skill):
             await asyncio.sleep(30)
         if not await self.bridge.wait_connected(60):
             log.info("Проверка «%s» пропущена: браузер не подключён", private(job.task))
+            if job.id not in self._offline_told:   # once until the browser is back, not every hour
+                self._offline_told.add(job.id)
+                await self.app.announce(f"Пропускаю проверку «{job.task}»: браузер с расширением Джарвиса не "
+                                        "открыт. Проверю в следующий раз, когда он подключится.")
             return
         outcome = await self.agent.run(Job(job.task, quiet=True))
         if not outcome.ok:

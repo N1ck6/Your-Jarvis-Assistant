@@ -7,6 +7,7 @@ import re
 
 import httpx
 
+from assistant.appnames import CYR2LAT
 from assistant.llm.providers import Msg
 from assistant.nlu import in_place, plural, to_nominative
 from assistant.skills.base import Intent, Reply, Skill, Tool
@@ -31,6 +32,11 @@ _QUESTION = re.compile(
     r"\b(когда|в какой день|какого числа|во сколько|сколько дней|недел\w*|выходн\w*|ближайш\w*|следующ\w*|"
     r"до конца|теплее|холоднее|потеплеет|похолодает|самы[йем] (тепл|холод|жарк|дождлив|солнечн)\w*|"
     r"шашлык\w*|прогулк\w*|велосипед\w*|помыть машину|мыть машину|закончится|кончится|прекратится|перестанет)\b")
+# Spoken short names the geocoder takes for villages ("Питер" is a village in Perm krai).
+_CITY_ALIASES = {"питер": "Санкт-Петербург", "питере": "Санкт-Петербург", "спб": "Санкт-Петербург",
+                 "петербург": "Санкт-Петербург", "петербурге": "Санкт-Петербург", "мск": "Москва",
+                 "екб": "Екатеринбург", "ёбург": "Екатеринбург", "нск": "Новосибирск", "новосиб": "Новосибирск",
+                 "нижний": "Нижний Новгород", "нижнем": "Нижний Новгород", "нижнем новгороде": "Нижний Новгород"}
 _CITY = re.compile(r"\b(?:в|во)\s+(?P<city>[а-яё-]+(?:\s+[а-яё-]+){0,2})")
 _DAY_WORDS = {"сегодня": 0, "завтра": 1, "послезавтра": 2}
 _WEEKDAYS = {"понедельник": 0, "вторник": 1, "среду": 2, "среда": 2, "четверг": 3, "пятницу": 4, "пятница": 4,
@@ -57,6 +63,77 @@ WMO = {
     77: "снежная крупа", 80: "ливень", 81: "ливни", 82: "сильные ливни", 85: "снегопад", 86: "сильный снегопад",
     95: "гроза", 96: "гроза с градом", 99: "гроза с сильным градом",
 }
+
+
+# Precipitation kind of a WMO code, for «Вечером дождь».
+_FREEZING = {56, 57, 66, 67}
+_DRIZZLE = {51, 53, 55}
+_STORM = {95, 96, 99}
+
+
+def _kind_of(code: int) -> str:
+    if code in _STORM:
+        return "гроза"
+    if code in _FREEZING:
+        return "ледяной дождь"
+    if code in _DRIZZLE:
+        return "морось"
+    if code in _SNOW:
+        return "снег"
+    if code in _RAIN:
+        return "дождь"
+    return ""
+
+
+def _precip_say(data: dict, day: int) -> str:
+    """The day's precipitation for the voice: its kind (дождь, снег, дождь со снегом, гроза, морось, ледяной дождь),
+    when (утром / днём / вечером / ночью / весь день) and the chance. "" when nothing likely falls."""
+    h = data.get("hourly") or {}
+    times = h.get("time") or []
+    if not times:
+        return ""
+    target = (dt.date.today() + dt.timedelta(days=day)).isoformat()
+    now_hour = dt.datetime.now().hour if day == 0 else -1
+    prob = h.get("precipitation_probability") or [0] * len(times)
+    amount = h.get("precipitation") or [0] * len(times)
+    kinds: list[str] = []
+    parts: list[str] = []
+    best = 0
+    for i, t in enumerate(times):
+        if not t.startswith(target) or int(t[11:13]) < now_hour:
+            continue
+        p, a = prob[i] or 0, amount[i] or 0
+        kind = _kind_of(h["weather_code"][i])
+        if not kind or (p < 40 and not (a >= 0.3 and p >= 25)):
+            continue
+        best = max(best, p)
+        if kind not in kinds:
+            kinds.append(kind)
+        part = next(name for name, hours in _HOURS.items() if int(t[11:13]) in hours)
+        if part not in parts:
+            parts.append(part)
+    if not kinds:
+        return ""
+    if "гроза" in kinds:
+        what = "гроза"
+    elif "ледяной дождь" in kinds:
+        what = "ледяной дождь"
+    elif "снег" in kinds and ({"дождь", "морось"} & set(kinds)):
+        what = "дождь со снегом"
+    elif "снег" in kinds:
+        what = "снег"
+    elif "дождь" in kinds:
+        what = "дождь"
+    else:
+        what = "морось"
+    order = ["утро", "день", "вечер", "ночь"]
+    parts.sort(key=order.index)
+    left = [p for p in order if max(_HOURS[p]) >= now_hour]   # the parts of the day still ahead
+    if len(parts) >= 3 or (len(parts) >= 2 and parts == left):
+        when = "Весь день" if day else "До конца дня"
+    else:
+        when = " и ".join(_PART_SAY[p].lower() for p in parts).capitalize()
+    return f"{when} {what}, вероятность {best} {plural(best, 'процент', 'процента', 'процентов')}."
 
 
 def _deg(t: float) -> str:
@@ -133,15 +210,27 @@ class WeatherSkill(Skill):
         key = city.lower()
         if key in self._geo_cache:
             return self._geo_cache[key]
-        for name in dict.fromkeys([to_nominative(city), city]):
+        nominative = _CITY_ALIASES.get(key) or _CITY_ALIASES.get(to_nominative(city).lower()) or to_nominative(city)
+        # The geocoder lacks Russian names for some cities ("Мурманск" finds only the village "Мурманский"), so a
+        # result counts only when its name is the asked one; the Latin spelling is the next try.
+        fallback = None
+        for name in dict.fromkeys([nominative, city, nominative.lower().translate(CYR2LAT)]):
             r = await client.get("https://geocoding-api.open-meteo.com/v1/search",
-                                 params={"name": name, "count": 1, "language": "ru", "format": "json"})
+                                 params={"name": name, "count": 10, "language": "ru", "format": "json"})
             r.raise_for_status()
             results = r.json().get("results") or []
-            if results:
-                g = results[0]
-                self._geo_cache[key] = (g["latitude"], g["longitude"], g["name"])
+            same = [g for g in results if g["name"].lower().replace("ё", "е") in (name.lower(), nominative.lower())
+                    and str(g.get("feature_code", "")).startswith("PPL")]
+            if same:
+                g = max(same, key=lambda g: (g.get("feature_code") in ("PPLC", "PPLA"), g.get("population") or 0))
+                shown = g["name"] if re.search(r"[а-яё]", g["name"], re.I) else nominative
+                self._geo_cache[key] = (g["latitude"], g["longitude"], shown)
                 return self._geo_cache[key]
+            if results and fallback is None:
+                fallback = results[0]
+        if fallback is not None:
+            self._geo_cache[key] = (fallback["latitude"], fallback["longitude"], fallback["name"])
+            return self._geo_cache[key]
         return None
 
     @staticmethod
@@ -214,7 +303,12 @@ class WeatherSkill(Skill):
         tmax, tmin = daily["temperature_2m_max"][day], daily["temperature_2m_min"][day]
         desc = WMO.get(daily["weather_code"][day], "")
         rain = daily.get("precipitation_probability_max", [None] * (day + 1))[day]
-        rain_txt = f" Вероятность осадков {rain} {plural(rain, 'процент', 'процента', 'процентов')}." if rain and rain >= 30 else ""
+        # what falls and when: «Вечером дождь, вероятность 70 процентов.»
+        what = _precip_say(data, day)
+        # with the hourly forecast the daily chance is not used: today it counts the hours already gone
+        rain_txt = (f" {what}" if what else "" if (data.get("hourly") or {}).get("time") else
+                    f" Вероятность осадков {rain} {plural(rain, 'процент', 'процента', 'процентов')}." if rain and rain >= 30
+                    else "")
         if day == 0:
             cur = data["current"]
             wind = round(cur["wind_speed_10m"])

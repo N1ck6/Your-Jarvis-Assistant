@@ -47,12 +47,15 @@ def get_clipboard_text() -> str | None:
         win32clipboard.CloseClipboard()
 
 
-def set_clipboard_text(text: str) -> bool:
+def set_clipboard_text(text: str, private: bool = False) -> bool:
+    """private: kept out of the clipboard history (Win+V) and clipboard managers, e.g. dictation passing through."""
     if not _open_clipboard():
         return False
     try:
         win32clipboard.EmptyClipboard()
         win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
+        if private:
+            _mark_private()
         return True
     finally:
         win32clipboard.CloseClipboard()
@@ -106,21 +109,43 @@ def save_clipboard() -> list[tuple[int, bytes]] | None:
     return saved
 
 
-def restore_clipboard(saved: list[tuple[int, bytes]] | None) -> None:
+def _put(fmt: int, data: bytes) -> None:
+    """One format onto the open clipboard."""
+    handle = _kernel32.GlobalAlloc(0x0002, max(len(data), 1))  # GMEM_MOVEABLE
+    ptr = _kernel32.GlobalLock(handle)
+    if not ptr:
+        _kernel32.GlobalFree(handle)
+        return
+    ctypes.memmove(ptr, data, len(data))
+    _kernel32.GlobalUnlock(handle)
+    if not user32.SetClipboardData(fmt, handle):
+        _kernel32.GlobalFree(handle)  # the clipboard did not take ownership
+
+
+# Windows' own markers (documented for clipboard history and cloud clipboard): the entry is not added to the
+# history list, not synced to other devices, and clipboard managers skip it.
+_PRIVATE_FORMATS = (("ExcludeClipboardContentFromMonitorProcessing", b"\0\0\0\0"),
+                    ("CanIncludeInClipboardHistory", b"\0\0\0\0"),
+                    ("CanUploadToCloudClipboard", b"\0\0\0\0"))
+
+
+def _mark_private() -> None:
+    for name, data in _PRIVATE_FORMATS:
+        fmt = win32clipboard.RegisterClipboardFormat(name)
+        if fmt:
+            _put(fmt, data)
+
+
+def restore_clipboard(saved: list[tuple[int, bytes]] | None, private: bool = False) -> None:
+    """private: the old content goes back without a new history entry (it is still there from before)."""
     if saved is None or not _open_clipboard():
         return
     try:
         win32clipboard.EmptyClipboard()
         for fmt, data in saved:
-            handle = _kernel32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
-            ptr = _kernel32.GlobalLock(handle)
-            if not ptr:
-                _kernel32.GlobalFree(handle)
-                continue
-            ctypes.memmove(ptr, data, len(data))
-            _kernel32.GlobalUnlock(handle)
-            if not user32.SetClipboardData(fmt, handle):
-                _kernel32.GlobalFree(handle)  # the clipboard did not take ownership
+            _put(fmt, data)
+        if private:
+            _mark_private()
     finally:
         win32clipboard.CloseClipboard()
 
@@ -211,10 +236,11 @@ def focused_control() -> int:
 
 
 def paste_text(text: str) -> None:
-    """Types text into the foreground window through the clipboard, then restores the clipboard."""
+    """Types text into the foreground window through the clipboard, then restores the clipboard.
+    Neither the text nor the restored content shows up in the clipboard history (Win+V): it stays as it was."""
     release_modifiers()
     old = save_clipboard()
-    set_clipboard_text(text)
+    set_clipboard_text(text, private=True)
     time.sleep(0.03)
     focus = focused_control()
     try:
@@ -227,7 +253,7 @@ def paste_text(text: str) -> None:
     else:
         hotkey("ctrl", "v")
         time.sleep(0.25)
-    restore_clipboard(old)
+    restore_clipboard(old, private=True)
 
 
 # ------------------------------------------------------------------ volume
